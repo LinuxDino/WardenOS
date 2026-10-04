@@ -59,6 +59,10 @@ end
 -- Moves into a solid block fail, dig removes it, inspect reads it, gps.locate (GPS_ON) returns POS.
 POS = { x = 0, y = 0, z = 0, f = 0 }
 WORLD = {}
+TRAIL = {}                     -- every cell the turtle entered, "x,y,z"
+YIELDS = 0                     -- path finder yields (os.queueEvent("wardenos_yield"))
+local qe = os.queueEvent
+os.queueEvent = function(e, ...) if e == "wardenos_yield" then YIELDS = YIELDS + 1 end return qe(e, ...) end
 GPS_ON = false
 FUEL = 500
 INV = { [1] = { name = "minecraft:coal", count = 12 }, [5] = { name = "minecraft:cobblestone", count = 64 } }
@@ -78,7 +82,7 @@ for n, side in pairs(SIDE) do
     if WORLD[key(x, y, z)] then return false, "Movement obstructed" end
     if FUEL <= 0 then return false, "Out of fuel" end
     local ok, e = orig()
-    if ok then POS.x, POS.y, POS.z = x, y, z FUEL = FUEL - 1 end
+    if ok then POS.x, POS.y, POS.z = x, y, z FUEL = FUEL - 1 TRAIL[#TRAIL + 1] = key(x, y, z) end
     return ok, e
   end
 end
@@ -295,21 +299,23 @@ for act in actions(M):
     elif act == "turnLeft": f = (f + 3) % 4
 check((x, y, z, f) == (0, 0, 0, 0), "home2: actions %s end at %s" % (actions(M), (x, y, z, f)))
 
-# blocked path: forward fails twice -> dig, then detour up, still arrives
+# blocked path: forward fails twice with nothing to see (a mob) -> waits (sleep 0.5 = one timer) and goes on, no dig
 rt, M, err = run_agent([cmd(5, "run", 1, {"name": "block", "code": "_G.BLOCKS = 2"}), ["timer", 1],
                         cmd(5, "home", 2), ["timer", 2], ["timer", 3]], fs1)
 st = statuses(M)[-1]
 acts = actions(M)
-check(nav(st) == (0, 0, 0, 0) and "dig" in acts and acts.count("up") >= 1,
-      "blocked: nav %s actions %s" % (nav(st), acts))
+check(nav(st) == (0, 0, 0, 0) and "dig" not in acts, "blocked: nav %s actions %s" % (nav(st), acts))
 check(st.lastTask and st.lastTask.name == "home" and st.lastTask.ok is True, "blocked: lastTask failed")
 
-# never gets through: error "blocked at ..."
+# never gets through (every forward fails): waits a little, replans, then gives up with an error
+TIMERS = [["timer", 10 + i] for i in range(40)]
 rt, M, err = run_agent([cmd(5, "run", 1, {"name": "block", "code": "_G.BLOCKS = 1000"}), ["timer", 1],
-                        cmd(5, "home", 2), ["timer", 2], ["timer", 3], ping(5)], fs1)
+                        cmd(5, "home", 2)] + TIMERS + [ping(5)], fs1)
 st = statuses(M)[-1]
 check(st.lastTask and st.lastTask.name == "home" and st.lastTask.ok is False
-      and st.lastTask.info.startswith("blocked at"), "stuck: lastTask %s" % (dict(st.lastTask) if st.lastTask else None))
+      and (st.lastTask.info.startswith("blocked at") or st.lastTask.info.startswith("no path")),
+      "stuck: lastTask %s" % (dict(st.lastTask) if st.lastTask else None))
+check(sum(1 for e in msgs(M) if e.to == 5 and e.msg.t == "status") == 1, "stuck: ping not answered")
 check(any(e.to == 5 and e.msg.t == "status" for e in msgs(M)), "stuck: agent dead after failed home")
 
 # stop cancels home (home is a normal task); a non-owner cannot sethome
@@ -556,8 +562,8 @@ check(st.lastTask and st.lastTask.name == "home" and st.lastTask.ok is True and 
 check(actions(M).count("forward") == 106 + 106, "fuelguard: moves %d" % actions(M).count("forward"))
 check(any(l.endswith("low fuel: returning home") for l in all_log_lines(M)), "fuelguard: no note")
 
-# --- helpers: moveTo (around a wall it may not dig, through stone it may), face, whereAmI
-world = {(7, 62, -3): PLANKS, (8, 63, -5): STONE}
+# --- helpers: moveTo (never digs planks, digs the stone where it has to go), face, whereAmI
+world = {(7, 62, -3): PLANKS, (8, 62, -7): STONE}
 code = ('moveTo(8, 62, -7) face("north") local w = whereAmI() '
         'return w.x, w.y, w.z, w.f, w.rel.x, w.rel.y, w.rel.z, w.rel.f, w.calibrated')
 rt, M, err = run_agent([cmd(5, "claim", 1), cmd(5, "calibrate", 2, {"x": 5, "y": 60, "z": -3, "facing": "south"}),
@@ -568,18 +574,20 @@ check(true_pos(rt) == (8, 62, -7, 0), "moveTo: really at %s, did %s" % (true_pos
 check(st.lastTask and st.lastTask.ok and st.lastTask.info == "8, 62, -7, 0, -3, 2, 4, 2, true",
       "moveTo: lastTask %s" % (dict(st.lastTask) if st.lastTask else None))
 W = rt.globals().WORLD
-check(W["7,62,-3"] is not None and W["8,63,-5"] is None, "moveTo: dug the wrong blocks")
+check(W["7,62,-3"] is not None and W["8,62,-7"] is None, "moveTo: dug the wrong blocks")
 check(actions(M).count("dig") == 1, "moveTo: digs %s" % actions(M))
 # not calibrated / stuck
 rt, M, err = run_agent([cmd(5, "claim", 1), cmd(5, "run", 3, {"name": "go", "code": "moveTo(1, 2, 3)"}), ["timer", 1], ping(5)],
                        pre=setup())
 lt = pinged(M)[-1].lastTask
 check(lt and lt.ok is False and lt.info.endswith("not calibrated"), "moveTo: uncalibrated %s" % (dict(lt) if lt else None))
+# a tall column of planks in the way: steps around it (the old mover climbed 20 blocks and gave up)
 rt, M, err = run_agent([cmd(5, "claim", 1), cmd(5, "calibrate", 2, {"x": 0, "y": 0, "z": 0, "facing": 0}),
-                        cmd(5, "run", 3, {"name": "go", "code": "moveTo(0, 0, -5)"}), ["timer", 1], ping(5)],
+                        cmd(5, "run", 3, {"name": "go", "code": "return moveTo(0, 0, -5)"}), ["timer", 1], ping(5)],
                        pre=setup((0, 0, 0, 0), {(0, y, -1): PLANKS for y in range(0, 40)}))
 lt = pinged(M)[-1].lastTask
-check(lt and lt.ok is False and lt.info == "blocked at 0 20 0", "moveTo: stuck %s" % (dict(lt) if lt else None))
+check(lt and lt.ok is True and lt.info == "true" and true_pos(rt)[:3] == (0, 0, -5) and "dig" not in actions(M)
+      and len(actions(M)) <= 9, "moveTo: column %s did %s" % (dict(lt) if lt else None, actions(M)))
 
 # face by name, uncalibrated = relative to home; findItem / selectItem; inspectAll
 code = ('face("west") local a = whereAmI().f face(1) local b = whereAmI().f turtle.select(5) '
@@ -598,6 +606,189 @@ rt, M, err = run_agent([cmd(5, "claim", 1), cmd(5, "calibrate", 2, {"x": 0, "y":
 lt = pinged(M)[-1].lastTask
 check(lt and lt.info == "2, minecraft:stone" and true_pos(rt)[3] == 0, "helpers-abs: %s" % (lt.info if lt else None))
 check(map_obs(M).get((0, 64, -1)) == "minecraft:stone", "helpers-abs: inspectAll not mapped")
+
+# ================================================================ 3D path finding
+OBSIDIAN = ("minecraft:obsidian", ["minecraft:mineable/pickaxe"])
+LAVA = ("minecraft:lava", [])
+MANY = [["timer", 100 + i] for i in range(60)]
+
+
+def trail(rt):
+    t = rt.globals().TRAIL
+    return [tuple(int(v) for v in t[i].split(",")) for i in range(1, len(t) + 1)]
+
+
+def calib(x, y, z, f="north", seq=2):
+    return cmd(5, "calibrate", seq, {"x": x, "y": y, "z": z, "facing": f})
+
+
+def go_task(code, world, start=(0, 64, 0, 0), extra_ev=(), after=None, fuel=None):
+    ev = [cmd(5, "claim", 1), calib(*start[:3], f=start[3])] + list(extra_ev)
+    ev += [cmd(5, "run", 3, {"name": "go", "code": code})] + (after if after is not None else MANY) + [ping(5)]
+    return run_agent(ev, pre=setup(start, world, fuel=fuel))
+
+
+def last(M):
+    p = pinged(M)
+    return p[-1].lastTask if p else None
+
+
+def intact(rt, world, name):
+    W = rt.globals().WORLD
+    return all(W["%d,%d,%d" % k] is not None for k, v in world.items() if v[0] == name)
+
+
+# --- wall of planks (21 high, too tall to climb cheaply) with a gap at x = 3: goes through the gap, digs nothing
+wall = {(x, y, -3): PLANKS for x in range(-10, 11) if x != 3 for y in range(54, 75)}
+rt, M, err = go_task("moveTo(0, 64, -6) return whereAmI().x", wall)
+lt = last(M)
+tr = trail(rt)
+check(lt and lt.ok is True and true_pos(rt)[:3] == (0, 64, -6), "wall: %s at %s" % (dict(lt) if lt else None, true_pos(rt)))
+check(intact(rt, wall, "minecraft:oak_planks") and "dig" not in actions(M), "wall: dug %s" % actions(M))
+check((3, 64, -3) in tr, "wall: did not use the gap %s" % tr)
+
+# --- a stone hill with a planks building on top: digs through the stone (or goes round), never the planks
+hill = {}
+for x in range(-6, 7):
+    for z in range(-6, -1):
+        for y in range(58, 67):
+            hill[(x, y, z)] = STONE
+        for y in range(67, 71):
+            hill[(x, y, z)] = PLANKS
+rt, M, err = go_task("return moveTo(0, 64, -8)", hill)
+lt = last(M)
+check(lt and lt.ok is True and true_pos(rt)[:3] == (0, 64, -8), "hill: %s at %s did %s"
+      % (dict(lt) if lt else None, true_pos(rt), actions(M)))
+check(intact(rt, hill, "minecraft:oak_planks"), "hill: dug planks")
+check(len(actions(M)) < 40, "hill: %d actions (silly route?)" % len(actions(M)))
+
+# --- the computer's map says the corridor is clear, but a block sits in it: found on the way, replans
+clear = {"blocks": [[0, 64, -z, "air"] for z in range(1, 7)]}
+rt, M, err = go_task("return moveTo(0, 64, -6)", {(0, 64, -3): PLANKS}, extra_ev=[cmd(5, "mapdata", 9, clear)])
+lt = last(M)
+check(acks(M).get(9) == (True, "6 blocks"), "replan: mapdata ack %s" % (acks(M).get(9),))
+check(lt and lt.ok is True and true_pos(rt)[:3] == (0, 64, -6) and rt.globals().WORLD["0,64,-3"] is not None,
+      "replan: %s at %s did %s" % (dict(lt) if lt else None, true_pos(rt), actions(M)))
+
+# --- a cave: obsidian everywhere below y 64 except a shaft at 0,63..60,0 and a corridor along x at y 60
+cave = {}
+for x in range(-12, 19):
+    for z in range(-10, 11):
+        for y in range(56, 64):
+            cave[(x, y, z)] = OBSIDIAN
+for y in range(60, 64):
+    cave.pop((0, y, 0))
+for x in range(0, 7):
+    cave.pop((x, 60, 0), None)
+rt, M, err = go_task("return moveTo(6, 60, 0)", cave, after=MANY * 3)
+lt = last(M)
+check(lt and lt.ok is True and true_pos(rt)[:3] == (6, 60, 0), "cave: %s at %s (%d moves)"
+      % (dict(lt) if lt else None, true_pos(rt), len(actions(M))))
+check(intact(rt, cave, "minecraft:obsidian"), "cave: dug obsidian")
+
+# --- fully enclosed target: "no path", the task ends (no endless loop), agent alive; planner yields
+enc = {(0 + dx, 64 + dy, -5 + dz): PLANKS for dx, dy, dz in
+       [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]}
+rt, M, err = go_task("return moveTo(0, 64, -5)", enc)
+lt = last(M)
+check(lt and lt.ok is False and (lt.info.startswith("no path to 0 64 -5") or lt.info.startswith("blocked at")),
+      "enclosed: lastTask %s" % (dict(lt) if lt else None))
+check(intact(rt, enc, "minecraft:oak_planks") and len(actions(M)) < 80, "enclosed: did %d actions" % len(actions(M)))
+check(err == "SCRIPT_END", "enclosed: agent died %s" % err)
+# known enclosure (map data): answered at once, no search
+blocks = {"blocks": [[x, y, z, "minecraft:oak_planks"] for (x, y, z) in enc]}
+rt, M, err = go_task("return pathTo(0, 64, -5)", {}, extra_ev=[cmd(5, "mapdata", 9, blocks)])
+check(last(M) and last(M).info == "nil, no path" and rt.globals().YIELDS == 0, "enclosed-known: %s"
+      % (last(M).info if last(M) else None))
+
+# planner yields on a big search: wall too wide for the search box (no path inside 24 blocks) -> search limit
+big = {"blocks": [[x, y, -3, "minecraft:bedrock"] for x in range(-30, 31) for y in range(34, 95)]}
+big["blocks"] = big["blocks"][:5000]
+rt, M, err = go_task("return pathTo(0, 64, -6)", {}, extra_ev=[cmd(5, "mapdata", 9, big)])
+y = rt.globals().YIELDS
+check(acks(M).get(9) == (True, "3721 blocks"), "yield: mapdata %s" % (acks(M).get(9),))
+check(last(M) and last(M).info in ("nil, search limit", "nil, no path") and y >= 50,
+      "yield: %s, %d yields" % (last(M).info if last(M) else None, y))
+
+# --- a protected area in the way: the stone in it is never dug, the drone goes around
+pwall = {(x, y, -3): STONE for x in range(-3, 4) for y in range(62, 67)}
+box = {"rev": 1, "boxes": [{"name": "Farm", "x1": -3, "y1": 62, "z1": -3, "x2": 3, "y2": 66, "z2": -3}]}
+rt, M, err = go_task("return moveTo(0, 64, -6)", pwall, extra_ev=[cmd(5, "protect", 8, box)])
+lt = last(M)
+check(lt and lt.ok is True and true_pos(rt)[:3] == (0, 64, -6), "protect-path: %s at %s"
+      % (dict(lt) if lt else None, true_pos(rt)))
+check(intact(rt, pwall, "minecraft:stone") and not any(c in pwall for c in trail(rt)), "protect-path: entered the box")
+
+# --- mapdata: lava and planks the drone never saw are avoided; pathTo plans without moving
+known = {"blocks": [[0, 64, -2, "minecraft:lava"], [0, 65, -2, "minecraft:oak_planks"], [0, 63, -2, "minecraft:oak_planks"],
+                    [1, 64, -2, "minecraft:stone"]]}
+rt, M, err = go_task("local n = pathTo(0, 64, -4) local m = pathTo(0, 64, 0) moveTo(0, 64, -4) return n, m", {},
+                     extra_ev=[cmd(5, "mapdata", 9, known)])
+lt = last(M)
+check(acks(M).get(9) == (True, "4 blocks"), "mapdata: ack %s" % (acks(M).get(9),))
+check(lt and lt.ok is True and lt.info.split(", ")[1] == "0" and int(lt.info.split(", ")[0]) >= 6,
+      "mapdata: lastTask %s" % (dict(lt) if lt else None))
+check(not any(c in [(0, 64, -2), (0, 65, -2), (0, 63, -2), (1, 64, -2)] for c in trail(rt)) and "dig" not in actions(M),
+      "mapdata: went through known blocks %s" % trail(rt))
+rt, M, err = run_agent([cmd(5, "claim", 1), cmd(5, "mapdata", 2, known), calib(0, 64, 0),
+                        cmd(5, "mapdata", 3, {"blocks": [[0, 0, 0, "x"]] * 5001}), cmd(5, "mapdata", 4, "x")],
+                       pre=setup((0, 64, 0, 0)))
+a = acks(M)
+check(a.get(2) == (False, "not calibrated") and a.get(3, (None,))[0] is False and a.get(4, (None,))[0] is False,
+      "mapdata: bad args %s" % a)
+
+# --- goto command: absolute (with face), relative, busy, stop cancels
+rt, M, err = run_agent([cmd(5, "claim", 1), cmd(5, "goto", 2, {"x": 3, "y": 64, "z": -2}), calib(0, 64, 0, seq=3),
+                        cmd(5, "goto", 4, {"x": 3, "y": 65, "z": -2, "face": "east"}), cmd(5, "forward", 5),
+                        ["timer", 1], ping(5)], pre=setup((0, 64, 0, 0)))
+a, lt = acks(M), last(M)
+check(a.get(2) == (False, "not calibrated") and a.get(4) == (True, "started") and a.get(5) == (False, "busy: goto 3 65 -2"),
+      "goto: acks %s" % a)
+check(lt and lt.name == "goto 3 65 -2" and lt.ok is True and lt.info == "arrived 3 65 -2" and true_pos(rt) == (3, 65, -2, 1),
+      "goto: %s at %s" % (dict(lt) if lt else None, true_pos(rt)))
+check(any(l.endswith("arrived 3 65 -2") for l in all_log_lines(M)), "goto: no note")
+check(any(s.task == "goto 3 65 -2" and s.state == "working" for s in statuses(M)), "goto: no working status")
+rt, M, err = run_agent([cmd(5, "claim", 1), cmd(5, "goto", 2, {"x": 1, "y": 0, "z": 1, "rel": True}), cmd(5, "sethome", 3),
+                        cmd(5, "goto", 4, {"x": -2, "y": 1, "z": 3, "rel": True, "face": 2}), ["timer", 1], ping(5),
+                        cmd(5, "goto", 5, {"x": "a", "y": 0, "z": 0, "rel": True}),
+                        cmd(5, "goto", 6, {"x": 0, "y": 0, "z": 0, "rel": True, "face": "up"})],
+                       pre=setup((10, 64, 10, 1)))
+a, lt = acks(M), last(M)
+check(a.get(2) == (False, "no home set") and a.get(4) == (True, "started") and a.get(5) == (False, "bad position")
+      and a.get(6) == (False, "bad facing"), "goto-rel: acks %s" % a)
+# home faced east (1): rel (-2, 1, 3) = 3 east... rel x -> -z? rel x is "right of home facing" = south (+z)
+check(lt and lt.ok is True and lt.info == "arrived -2 1 3" and nav(pinged(M)[-1]) == (-2, 1, 3, 2)
+      and true_pos(rt) == (7, 65, 8, 3), "goto-rel: %s nav %s at %s" % (dict(lt) if lt else None,
+                                                                      nav(pinged(M)[-1]), true_pos(rt)))
+# stop: forward always fails (a mob that never leaves) -> the goto waits; stop cancels it
+rt, M, err = run_agent([cmd(5, "claim", 1), calib(0, 64, 0, seq=2), cmd(5, "run", 3, {"name": "mob", "code": "_G.BLOCKS = 1000"}),
+                        ["timer", 1], cmd(5, "goto", 4, {"x": 0, "y": 64, "z": -9}), ["timer", 2], cmd(5, "stop", 5),
+                        ["timer", 3], ["timer", 4], ping(5), cmd(5, "goto", 6, {"x": 0, "y": 65, "z": 0}), ["timer", 5], ping(5)],
+                       pre=setup((0, 64, 0, 0)))
+a, p = acks(M), pinged(M)
+check(a.get(4) == (True, "started") and a.get(5, (None,))[0] is True, "goto-stop: acks %s" % a)
+check(p[0].lastTask and p[0].lastTask.name == "goto 0 64 -9" and p[0].lastTask.ok is False and p[0].lastTask.info == "stopped"
+      and p[0].task == "manual", "goto-stop: %s" % (dict(p[0].lastTask) if p[0].lastTask else None))
+check(a.get(6) == (True, "started") and p[-1].lastTask.ok is True and true_pos(rt)[:3] == (0, 65, 0),
+      "goto-stop: next goto %s" % (dict(p[-1].lastTask),))
+
+# --- home uses the planner: a planks wall (3 wide, 3 high) between the drone and home -> around, no digging
+rt, M, err = run_agent([cmd(5, "claim", 1), calib(0, 64, 0, seq=2), cmd(5, "back", 3), cmd(5, "back", 4), cmd(5, "back", 5),
+                        cmd(5, "run", 6, {"name": "wall", "code": "for x = -1, 1 do for y = 63, 65 do "
+                                          "WORLD[x .. ',' .. y .. ',1'] = { name = 'minecraft:oak_planks', tags = {} } end end"}),
+                        ["timer", 1], cmd(5, "home", 7)] + MANY + [ping(5)], pre=setup((0, 64, 0, 0)))
+st = pinged(M)[-1]
+check(st.lastTask and st.lastTask.name == "home" and st.lastTask.ok is True and nav(st) == (0, 0, 0, 0)
+      and true_pos(rt) == (0, 64, 0, 0), "home-plan: %s at %s" % (dict(st.lastTask) if st.lastTask else None, true_pos(rt)))
+check("dig" not in actions(M) and rt.globals().WORLD["0,64,1"] is not None, "home-plan: dug %s" % actions(M))
+fs_m = {k: v for k, v in M.FS.items()}
+check("/os/drone/memory" in fs_m and "minecraft:oak_planks" in fs_m["/os/drone/memory"], "memory: not saved")
+check(st.known and st.known > 5, "memory: known %s" % st.known)
+# restart: memory loaded; still in the relative frame after sethome moves home
+rt, M, err = run_agent([ping(5), cmd(5, "sethome", 1), cmd(5, "run", 2, {"name": "p", "code": "return pathTo(0, 64, 2)"}),
+                        ["timer", 1], ping(5)], fs_m, pre=setup((0, 64, 0, 0)))
+p = pinged(M)
+check(p[0].known == st.known, "memory: reload %s vs %s" % (p[0].known, st.known))
 
 print("drone tasks: ok" if not fail else "drone tasks: FAILED (%d)" % len(fail))
 sys.exit(1 if fail else 0)
