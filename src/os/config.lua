@@ -1,7 +1,7 @@
 -- WardenOS config
 return {
   name    = "WardenOS",
-  version = "1.5.0",
+  version = "1.5.1",
   repo    = "LinuxDino/WardenOS",  -- GitHub repo used by "Update WardenOS"
   branch  = "main",
 

@@ -208,6 +208,22 @@ fs = env.fs()
 check(env.M.rebooted and fs.get("/os/pocket/config") == '{ mode = "local" }' and fs.get("/os/claude/key") == "sk-test"
       and fs.get("/os/pocket/main.lua") == read("src/os/pocket/main.lua") and fs.get("/startup.old.lua") == "print('mine')",
       "pocket update failed: %s %s" % (err, env.log()[-300:]))
+# a pocket that reports no colour (seen on a real gold pocket): installs anyway, works with the keyboard only
+NO_COLOUR = "local n = term.native() n.isColor = function() return false end n.isColour = n.isColor"
+for script in ("install.lua", "pastebin.lua"):
+    env = Env(lines=["y"])
+    env.rt.execute(NO_COLOUR)
+    ok, err = env.run_file(script)
+    check(env.M.rebooted and env.fs().get("/os/pocket/main.lua") == read("src/os/pocket/main.lua"),
+          "no-colour pocket install via %s refused: %s %s" % (script, err, env.log()[-200:]))
+fs = dict(POCKET_FS)
+env = Env(events=[["key", 208], ["key", ENTER], ["key", F12]], files=fs)   # Down, Enter = "run on this pocket only"
+env.rt.execute(NO_COLOUR)
+ok, err = env.run_file("/startup.lua")
+conf = env.unser(env.fs().get("/os/pocket/config", "nil")) or {}
+check(ok and conf.get("mode") == "local", "keyboard-only setup failed: %s %s %s" % (err, conf, env.log()[-200:]))
+check(any(">" in w for w in env.M.written.values()), "keyboard marker not drawn")
+violations(env, "keyboard-only pocket")
 print("pocket install: ok" if not fail else "pocket install: FAILED")
 nfail = len(fail)
 

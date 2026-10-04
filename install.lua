@@ -30,11 +30,8 @@ if not http then
 end
 local isTurtle = turtle ~= nil
 local isPocket = pocket ~= nil and not isTurtle
-if isPocket and not term.isColour() then
-  printError("WardenOS Pocket needs an Advanced Pocket Computer (gold).")
-  return
-end
-if not isTurtle and not term.isColour() then
+-- pockets install even without colour/touch (the pocket UI also works with the keyboard)
+if not isTurtle and not isPocket and not term.isColour() then
   printError("WardenOS needs an Advanced Computer (gold).")
   print("Turtles can run the WardenOS drone agent: run this installer on a turtle.")
   return

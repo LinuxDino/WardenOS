@@ -80,6 +80,11 @@ local ticks = 0
 
 local function setNote(s, c) note, noteColor = s or "", c end
 
+-- keyboard control: Tab / arrows move a ">" marker over the buttons, Enter or Space presses it.
+-- Always on when the pocket has no colour/touch; on gold pockets it appears with the first arrow key.
+local kbdOnly = not term.isColour()
+local focus = kbdOnly and 1 or nil
+
 ---------------------------------------------------------------- network
 local function openModems()
   for _, n in ipairs(peripheral.getNames()) do
@@ -139,6 +144,7 @@ end
 
 local function go(s)
   screen, zones = s, {}
+  focus = kbdOnly and 1 or (focus and 1 or nil)
   if s == "drones" or s == "drone" then
     if connected() then toServer({ t = "pocket_drones" }) else ping() end
   elseif s == "servers" then
@@ -814,6 +820,15 @@ local function draw()
   native.clear()
   local f = DRAW[screen] or drawHome
   f()
+  if focus and #zones > 0 then                  -- keyboard marker
+    if focus > #zones then focus = #zones end
+    local z = zones[focus]
+    local x = z[1] > 1 and z[1] - 1 or math.min(W, z[3] + 1)
+    native.setCursorPos(x, z[2])
+    native.setTextColor(T.warn)
+    native.setBackgroundColor(T.bg)
+    native.write(">")
+  end
   if screen == "claude" and canType() then
     if needsKey() then return end
     native.setCursorPos(math.min(W, 3 + math.min(#input, W - 3)), H)
@@ -835,7 +850,25 @@ local function click(x, y)
   end
 end
 
+local function moveFocus(d)
+  if #zones == 0 then return end
+  focus = ((focus or (d > 0 and 0 or 1)) - 1 + d) % #zones + 1
+end
+local function pressFocus()
+  local z = focus and zones[focus]
+  if not z then return false end
+  setNote("")
+  z[5]()
+  return true
+end
+
 local function onKey(e, a)
+  if e == "key" and a == keys.tab then moveFocus(1) return true end
+  if e == "key" and screen ~= "claude" then
+    if a == keys.down or a == keys.right then moveFocus(1) return true end
+    if a == keys.up or a == keys.left then moveFocus(-1) return true end
+    if a == keys.enter or a == keys.space then return pressFocus() end
+  end
   if screen == "setup" and e == "char" then
     if a == "1" then zones = {} drawSetup() zones[1][5]() end   -- same as tapping the tiles
     if a == "2" then zones = {} drawSetup() zones[2][5]() end
@@ -849,8 +882,10 @@ local function onKey(e, a)
     elseif a == keys.enter then
       if needsKey() then
         if input:match("%S") then core.api.setKey(input) input = "" end
-      elseif canType() then
+      elseif canType() and input:match("%S") then
         submit()
+      else
+        pressFocus()                              -- empty input: Enter presses the marked button
       end
       return true
     elseif a == keys.up or a == keys.pageUp then chatScroll = chatScroll + (a == keys.up and 1 or 5) return true
