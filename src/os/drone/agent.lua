@@ -1,7 +1,7 @@
 -- WardenOS Drone agent (runs on a turtle)
 -- Reports status over rednet (protocol "wardenos") and takes commands from its owner computer.
 -- Installed by the WardenOS installer; started by /startup.lua.
-local VERSION = "1.3.1"
+local VERSION = "1.4.1"
 local PROTO = "wardenos"
 local CFG = "/os/drone/config"
 local NAV = "/os/drone/nav"
@@ -359,18 +359,26 @@ end
 -- unknown inside a protected area 3, known block that may be dug 4, anything else impassable (not diggable
 -- under the dig rule, inside a protected area, bedrock & co, lava, other turtles, recently blocked cells).
 -- An unknown cell next to a known block costs C_NEAR_HARD (block it may not dig) / C_NEAR_DIG (diggable) more.
-local C_UNKNOWN, C_UNKNOWN_BOX, C_DIG, C_NEAR_HARD, C_NEAR_DIG = 1, 3, 4, 6, 1
+local C_UNKNOWN, C_UNKNOWN_BOX, C_DIG, C_NEAR_HARD, C_NEAR_DIG = 1, 3, 4, 3, 1
 -- During one trip every cell the drone already went through costs C_VISIT more per visit: stops it from
 -- swinging back and forth while it feels its way along a wall (LRTA*-style learning).
 local C_VISIT = 2
 local NEAR = { { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } }
-local H_WEIGHT = 1.5                            -- heuristic = 1.5 * Manhattan: unknown cells cost 2 per step
+-- heuristic = 2 * Manhattan + turns: exact for unknown space (2 per step), so the search runs straight at the
+-- target; over known air (1 per step) it is greedy (weighted A*: paths at most 2x the best, usually the best).
+local H_WEIGHT = 2
 local UNBREAKABLE = { ["minecraft:bedrock"] = true, ["minecraft:barrier"] = true, ["minecraft:end_portal_frame"] = true,
   ["minecraft:end_portal"] = true, ["minecraft:nether_portal"] = true, ["minecraft:reinforced_deepslate"] = true,
   ["minecraft:command_block"] = true, ["minecraft:structure_block"] = true, ["minecraft:light"] = true,
   ["minecraft:lava"] = true }
-local PASSABLE = { air = true, ["minecraft:air"] = true, ["minecraft:cave_air"] = true, ["minecraft:void_air"] = true,
-  ["minecraft:water"] = true, ["minecraft:bubble_column"] = true }
+-- enterable without digging (air and vanilla "replaceable" blocks, for when only the name is known)
+local PASSABLE = {}
+for _, n in ipairs { "air", "minecraft:air", "minecraft:cave_air", "minecraft:void_air", "minecraft:water",
+                     "minecraft:bubble_column", "minecraft:short_grass", "minecraft:grass", "minecraft:tall_grass",
+                     "minecraft:fern", "minecraft:large_fern", "minecraft:dead_bush", "minecraft:vine", "minecraft:snow",
+                     "minecraft:seagrass", "minecraft:tall_seagrass", "minecraft:glow_lichen", "minecraft:fire" } do
+  PASSABLE[n] = true
+end
 local Y_MIN, Y_MAX = -64, 319                   -- world build limits (absolute)
 
 -- can the turtle move into a block with this name (air or replaceable, but never lava)?
@@ -483,16 +491,27 @@ local function searchOnce(s, t, margin, maxExp, ctx)
     end
     return c
   end
-  local function h(x, y, z) return H_WEIGHT * (math.abs(x - tx) + math.abs(y - ty) + math.abs(z - tz)) end
-  local function relax(ns, ng, x, y, z, prev)
+  -- heuristic: weighted Manhattan distance + the turns still needed (facing f)
+  local function h(x, y, z, f)
+    local dx, dz = tx - x, tz - z
+    local turns = 0
+    if dx ~= 0 or dz ~= 0 then
+      local a = dx > 0 and 1 or dx < 0 and 3 or nil          -- needed facings
+      local b = dz > 0 and 2 or dz < 0 and 0 or nil
+      if a and b then turns = (f == a or f == b) and 1 or 2
+      else turns = ((a or b) - f) % 4 == 2 and 2 or (a or b) == f and 0 or 1 end
+    end
+    return H_WEIGHT * (math.abs(dx) + math.abs(y - ty) + math.abs(dz)) + turns
+  end
+  local function relax(ns, ng, x, y, z, f, prev)
     if not closed[ns] and (g[ns] == nil or ng < g[ns]) then
       g[ns], from[ns] = ng, prev
-      push(ns, ng + h(x, y, z) - ng * 1e-6)    -- ties: prefer the node further along
+      push(ns, ng + h(x, y, z, f) - ng * 1e-6)    -- ties: prefer the node further along
     end
   end
   local start = (((s.x - x0) * SY + (s.y - y0)) * SZ + (s.z - z0)) * 4 + s.f
   g[start] = 0
-  push(start, h(s.x, s.y, s.z))
+  push(start, h(s.x, s.y, s.z, s.f))
   local exp = 0
   while hn > 0 do
     local st = pop()
@@ -537,7 +556,7 @@ local function searchOnce(s, t, margin, maxExp, ctx)
           if c then
             local turn = (d - f) % 4
             local ns = nci * 4 + d
-            relax(ns, gs + (turn == 2 and 2 or turn == 0 and 0 or 1) + 1 + c, nx, y, nz, st)
+            relax(ns, gs + (turn == 2 and 2 or turn == 0 and 0 or 1) + 1 + c, nx, y, nz, d, st)
           end
         end
       end
@@ -547,7 +566,7 @@ local function searchOnce(s, t, margin, maxExp, ctx)
           local nci = ci + dy * SZ
           local c = cost(nci, x, ny, z)
           if c then
-            relax(nci * 4 + f, gs + 1 + c, x, ny, z, st)
+            relax(nci * 4 + f, gs + 1 + c, x, ny, z, f, st)
           end
         end
       end
@@ -660,7 +679,7 @@ for n in pairs(TRACK) do
       dirty = true
       pcall(saveNav)
       if MOVED[n] then memSet(nav.x, nav.y, nav.z, "air") end     -- where it stands now is passable
-      if (origin or sensing) and not quiet then
+      if (origin or (sensing and running)) and not quiet then
         observe("front")
         if MOVED[n] then observe("up") observe("down") end
       end
@@ -891,6 +910,7 @@ local function say(...)
 end
 
 local function startJob(name, fn, builtin)
+  sensing = false                               -- a stopped trip never got to switch it off
   job = { name = name, co = coroutine.create(fn), builtin = builtin }
   task, state = name, "working"
   os.queueEvent("wardenos_task")
@@ -910,7 +930,7 @@ local function here()
   return ("%d %d %d"):format(a.x, a.y, a.z)
 end
 
-local MAX_REPLANS, MOB_WAITS, MOB_BUDGET = 400, 5, 10
+local MAX_REPLANS, MOB_WAITS, MOB_BUDGET = 40, 5, 10
 
 -- try to move into the next cell of a path; false if it can't (the reason is now in the memory)
 local function enter(step, trip)
