@@ -275,7 +275,15 @@ function fs.open(p, mode)
   if mode == "r" then
     local v = FS[p]
     if type(v) ~= "string" then return nil, "No such file" end
-    return { readAll = function() return v end, close = function() end }
+    local pos = 1
+    return { readAll = function() return v end, close = function() end,
+             readLine = function()                 -- like CC: next line without "\n", nil at the end
+               if pos > #v then return nil end
+               local e = v:find("\n", pos, true) or (#v + 1)
+               local line = v:sub(pos, e - 1)
+               pos = e + 1
+               return line
+             end }
   end
   local dir = fs.getDir(p)
   if dir ~= "" and FS["/" .. dir] ~= true then return nil, "No such directory" end

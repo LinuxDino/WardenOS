@@ -10,7 +10,12 @@ return {
     term.setCursorPos(1, 1)
     term.setTextColor(WardenOS.theme.accent)
     print(WardenOS.name .. " terminal  (" .. os.version() .. ")")
+    term.setTextColor(colors.lightGray)
+    print("try: neofetch, btop")
     term.setTextColor(colors.white)
+    if shell and shell.setPath and not (":" .. shell.path() .. ":"):find(":/os/bin:", 1, true) then
+      shell.setPath(shell.path() .. ":/os/bin")      -- the new shell copies this path
+    end
     os.run(env, "/rom/programs/shell.lua")
   end,
 }

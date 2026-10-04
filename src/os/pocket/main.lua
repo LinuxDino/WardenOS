@@ -398,6 +398,9 @@ local function openTerminal()
     term.setTextColor(T.dim)
     print("Type exit to go back.")
     term.setTextColor(colors.white)
+    if shell and shell.setPath and not (":" .. shell.path() .. ":"):find(":/os/bin:", 1, true) then
+      shell.setPath(shell.path() .. ":/os/bin")      -- the new shell copies this path
+    end
     os.run(setmetatable({ shell = shell, multishell = false }, { __index = _G }), "/rom/programs/shell.lua")
   end)
   shellFilter = nil
