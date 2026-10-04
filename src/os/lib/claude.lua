@@ -73,8 +73,17 @@ local function post(key, payload)
     ["anthropic-version"] = "2023-06-01",
     ["anthropic-beta"] = "server-side-fallback-2026-07-01",   -- for fallbacks = "default"
   }
-  -- a request that fails right away still queues http_failure, which the loop below picks up
-  http.request({ url = M.URL, body = payload, headers = headers, method = "POST", binary = true, timeout = 300 })
+  -- Ask for a long timeout (Claude can take a while), but servers cap it ("timeout out of range"
+  -- is a hard error), so step down and finally use the server's default.
+  -- A request that fails later still queues http_failure, which the loop below picks up.
+  local req = { url = M.URL, body = payload, headers = headers, method = "POST", binary = true }
+  local ok, err
+  for _, t in ipairs({ 300, 120, 60, 30, false }) do
+    req.timeout = t or nil
+    ok, err = pcall(http.request, req)
+    if ok or not tostring(err):lower():find("timeout") then break end
+  end
+  if not ok then return nil, "could not send the request: " .. tostring(err), false end
   while true do
     local e, url, a, b = os.pullEvent()
     if url == M.URL and e == "http_success" then

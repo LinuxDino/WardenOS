@@ -508,6 +508,42 @@ def no_key():
     return pr
 
 
+# servers cap the http timeout; CC: Tweaked throws "Timeout out of range" right away
+CAP_TIMEOUT = """
+local real = http.request
+http.request = function(req)
+  if type(req) == "table" and req.timeout and req.timeout > LIMIT then error("Timeout out of range", 2) end
+  return real(req)
+end
+"""
+
+def timeout_capped():
+    env = Env(typed("hi"), [reply([text("Works now.")])], prelude=CAP_TIMEOUT.replace("LIMIT", "60")).run()
+    pr = env.problems
+    expect(pr, len(env.bodies) == 1, "%d requests" % len(env.bodies))
+    expect(pr, len(env.bodies) == 1 and env.M.requests[1].timeout == 60, "should fall back to timeout 60")
+    expect(pr, "Works now." in env.written and "out of range" not in env.written, "reply not shown:\n" + env.screen())
+    return pr
+
+def timeout_refused():
+    # a server that rejects every timeout value: the request goes out without one
+    env = Env(typed("hi"), [reply([text("Default timeout.")])], prelude=CAP_TIMEOUT.replace("LIMIT", "-1")).run()
+    pr = env.problems
+    expect(pr, len(env.bodies) == 1 and env.M.requests[1].timeout is None, "should send without a timeout")
+    expect(pr, "Default timeout." in env.written, "reply not shown:\n" + env.screen())
+    return pr
+
+def send_error():
+    # any other error thrown by http.request: shown, not a crash, history rolled back
+    pre = 'http.request = function() error("Domain not permitted", 2) end'
+    env = Env(typed("hi"), [], prelude=pre).run()
+    pr = env.problems
+    shown = " ".join(env.screen().split())
+    expect(pr, "could not send the request: Domain not permitted" in shown,
+           "error not shown:\n" + env.screen())
+    expect(pr, "crashed" not in env.written, "app crashed")
+    return pr
+
 SCENARIOS = [("a plain chat + exact history echo", plain_chat), ("b tool loop, Allow button", tool_allow),
                  ("b2 Always button", tool_always), ("c Deny button", tool_deny), ("d parallel tool calls", parallel_tools),
                  ("e1 500/503 retries then 200", retries), ("e2 retries exhausted -> rollback", retries_exhausted),
@@ -516,7 +552,9 @@ SCENARIOS = [("a plain chat + exact history echo", plain_chat), ("b tool loop, A
                  ("e6 empty reply keeps the history valid", empty_reply),
                  ("e7 malformed reply -> crash notice + rollback", malformed_reply),
                  ("f1 drone tool without drones", drones_none), ("f2 drone_task + foreign drone refused", drones_task),
-                 ("g drone_status wait_seconds", drones_status), ("h options view", options), ("i no key -> key screen", no_key)]
+                 ("g drone_status wait_seconds", drones_status), ("h options view", options), ("i no key -> key screen", no_key),
+                 ("j server caps the timeout", timeout_capped), ("j2 server refuses any timeout", timeout_refused),
+                 ("j3 request can't be sent", send_error)]
 for name, fn in SCENARIOS:
     scenario(name, fn)
 
