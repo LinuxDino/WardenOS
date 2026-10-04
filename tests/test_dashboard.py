@@ -372,7 +372,7 @@ local rev = map.protected().rev
 WardenOS.drones = {
   [12] = { t = "status", kind = "turtle", label = "miner", owner = 7, task = "mine", state = "run", fuel = 50,
            fuelItems = 3, version = "1.4.0", protectRev = 0, safeDig = true, seen = os.clock() - 30,
-           calibrated = true, abs = { x = 120, y = 64, z = -30, f = 1 } },
+           calibrated = true, abs = { x = 120, y = 64, z = -30, f = 1 }, by = { id = 7, who = "claude" } },
   [13] = { t = "status", kind = "turtle", label = "ok", owner = 7, task = "manual", state = "ready", fuel = 5000,
            version = WardenOS.version, protectRev = rev, safeDig = true, seen = os.clock(), calibrated = false },
 }
@@ -428,7 +428,7 @@ for (cw, ch) in [(45, 17), (45, 18), (52, 22), (51, 21)]:
     dr = sh.get("Drones", "")
     check("2 drones, 1 online, 1 need attention" in dr, "%s: drones summary:\n%s" % (tag, dr))
     check("f:50+3c!" in dr and "off 30s" in dr and "v1.4.0!" in dr and "prot 0!" in dr and "120 64 -30" in dr
-          and "uncal." in dr, "%s: drone warnings:\n%s" % (tag, dr))
+          and "uncal." in dr and " AI" in dr, "%s: drone warnings:\n%s" % (tag, dr))
     check("#13 ok" in dr and "f:5000" in dr and "f:5000!" not in dr, "%s: healthy drone flagged:\n%s" % (tag, dr))
     det = sh.get("drone-detail", "")
     check("protectRev" in det and "fuelItems" in det and "seen 30s ago" in det, "%s: drone detail:\n%s" % (tag, det))
@@ -492,7 +492,7 @@ env = Env(events=ev, CW=CW, CH=CH)
 env.M.redstone.back = 15
 prelude = r"""
 local W = WardenOS
-W.drones = { [12] = { fuel = 50, task = "mine", seen = os.clock() }, [13] = { fuel = 900, task = "manual", seen = os.clock() - 60 } }
+W.drones = { [12] = { fuel = 50, task = "mine", state = "working", by = { id = 7, who = "claude" }, seen = os.clock() }, [13] = { fuel = 900, task = "manual", seen = os.clock() - 60 } }
 local map = dofile("/os/lib/map.lua")
 map.add({ { 10, 64, 20, "minecraft:stone" } })
 map.protect({ name = "base", x1 = 0, z1 = 0, x2 = 10, z2 = 10 })
@@ -525,7 +525,7 @@ has("args", "Arguments for getTemperature")
 has("custom", "getTemperature()", "1.2k")
 has("custom2", "getInfo(5, x)", "arg: 5", "mode: auto", "rate: 5")
 has("redstone", "Redstone back", "back: 15 ON")
-has("drones", "2 drones, 1 online", "1 busy, 1 offline", "1 low fuel")
+has("drones", "2 drones, 1 online", "1 busy, 1 offline", "1 low fuel, 1 AI")
 has("map", "World map", "1 protected areas", "blocks")
 has("computer", "#7", "day 1")
 has("clock", "12:00")

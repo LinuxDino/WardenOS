@@ -272,28 +272,20 @@ local function sampleCustom(w)
   return { value = v, hist = tonumber(v) }
 end
 
-local function claudeCount()
-  if not fs.exists("/os/lib/claude.lua") then return 0 end
-  local ok, n = pcall(function()
-    local c = 0
-    for _ in pairs(dofile("/os/lib/claude.lua").getDrones()) do c = c + 1 end
-    return c
-  end)
-  return ok and n or 0
-end
-
+-- online / working (a task running) / low fuel / AI (task started by Claude: status.by.who == "claude")
 local function sampleDrones()
-  local d = { total = 0, online = 0, working = 0, low = 0, offline = 0 }
+  local d = { total = 0, online = 0, working = 0, low = 0, offline = 0, ai = 0 }
   for _, s in pairs(type(WardenOS.drones) == "table" and WardenOS.drones or {}) do
     if type(s) == "table" then
       d.total = d.total + 1
       local on = type(s.seen) == "number" and os.clock() - s.seen < 10
       if on then d.online = d.online + 1 else d.offline = d.offline + 1 end
-      if on and s.task and s.task ~= "idle" and s.task ~= "manual" then d.working = d.working + 1 end
+      local busy = s.state == "working" or (s.task ~= nil and s.task ~= "idle" and s.task ~= "manual")
+      if on and busy then d.working = d.working + 1 end
+      if on and type(s.by) == "table" and s.by.who == "claude" then d.ai = d.ai + 1 end
       if type(s.fuel) == "number" and s.fuel < 200 then d.low = d.low + 1 end
     end
   end
-  d.ai = claudeCount()
   d.hist = d.online
   return d
 end

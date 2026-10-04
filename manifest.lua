@@ -33,6 +33,8 @@ return {
     "os/apps/peripherals.lua",
     "os/apps/settings.lua",
     "os/apps/terminal.lua",
+    "os/bin/btop.lua",
+    "os/bin/neofetch.lua",
     "os/drone/agent.lua",
     "os/drone/startup.lua",
     "os/pocket/claudecore.lua",

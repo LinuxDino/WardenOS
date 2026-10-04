@@ -129,7 +129,8 @@ return {
     ------------------------------------------------ health checks (add your own)
     local checks = {
       { name = "Monitor", test = function()
-          return peripheral.find("monitor") ~= nil, "attached" end },
+          local m = peripheral.find("monitor") ~= nil
+          return m, m and "attached" or "not attached" end },
       { name = "Disk", test = function()
           local f = fs.getFreeSpace("/")
           return f > 20000, math.floor(f / 1024) .. " KB free" end },
@@ -379,6 +380,7 @@ return {
           if W >= 40 then
             local sd = d.safeDig == nil and "" or (d.safeDig and "safe" or "UNSAFE")
             put(34, ry, cut(sd, W - 35), d.safeDig == false and T.warn or T.dim)
+            if type(d.by) == "table" and d.by.who == "claude" and W - 35 >= 10 then put(41, ry, "AI", T.accent) end
           end
         end
       end)
@@ -494,8 +496,9 @@ return {
       end
       return n
     end
-    local function scanDisk()
-      disk = { dirs = {}, at = os.clock() }
+    local function scanDisk(withMap)
+      local old = disk
+      disk = { dirs = {}, at = os.clock(), map = old and old.map }
       local budget = { left = 3000 }
       local okl, entries = pcall(fs.list, "/os")
       if okl then
@@ -509,14 +512,14 @@ return {
         table.sort(disk.dirs, function(a, b) return a.size > b.size end)
       end
       disk.partial = budget.left < 0
-      if map then
+      if map and (withMap or not disk.map) then         -- map.info() reads every block: only on demand
         local ok, info = pcall(map.info)
         if ok and type(info) == "table" then disk.map = info end
       end
     end
 
     local function diskPanel(y)
-      if not disk or os.clock() - disk.at > 30 then scanDisk() end
+      if not disk then scanDisk(true) elseif os.clock() - disk.at > 30 then scanDisk(false) end
       local used, cap, free = storage()
       if cap then
         local frac = used / cap
@@ -576,7 +579,10 @@ return {
         local label = " " .. (useLong and p.name or p.short) .. " "
         if x + #label - 1 > W then break end
         put(x, 1, label, i == tab and T.bg or T.dim, i == tab and T.accent or T.panel)
-        zone(x, 1, #label, function() tab = i end)
+        zone(x, 1, #label, function()
+          if p.name == "Disk" and tab ~= i then disk = nil end   -- fresh numbers when the tab is opened
+          tab = i
+        end)
         x = x + #label
       end
       fill(x, 1, W - x + 1, 1, T.panel)
