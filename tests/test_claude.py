@@ -14,7 +14,8 @@ URL = "https://api.anthropic.com/v1/messages"
 CW, CH = 48, 18
 ENTER = 28
 TOOL_NAMES = {"run_lua", "list_files", "read_file", "write_file", "list_peripherals", "call_peripheral",
-              "network_scan", "drone_command", "drone_task", "drone_status"}
+              "network_scan", "drone_command", "drone_task", "drone_status", "drone_scan",
+              "map_view", "map_find", "map_info", "protect_area"}
 BODY_KEYS = {"model", "max_tokens", "system", "tools", "messages", "output_config", "fallbacks", "cache_control"}
 
 failed = []
@@ -69,7 +70,8 @@ class Env:
         g.HOST_API = self.api
         g.HOST_EVENT = self.host_event
         self.M = self.rt.execute(read("tests/mock_cc.lua"))
-        for p in ("os/apps/claude.lua", "os/lib/claude.lua", "os/lib/json.lua"):
+        for p in ("os/apps/claude.lua", "os/lib/claude.lua", "os/lib/claudetools.lua", "os/lib/json.lua",
+                  "os/lib/map.lua"):
             self.M.FS["/" + p] = read("src/" + p)
         for d in ("/os", "/os/apps", "/os/lib"):
             self.M.FS[d] = True

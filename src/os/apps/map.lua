@@ -1,0 +1,341 @@
+-- Map: top-down view of the world map the drones build (/os/lib/map.lua), drone markers, protected areas
+local PROTO = "wardenos"
+
+return {
+  name = "Map", short = "Map", icon = "[#]", color = colors.lime, order = 7,
+  w = 46, h = 18,
+  main = function()
+    local T = WardenOS.theme
+    local map = dofile("/os/lib/map.lua")
+    local me = os.getComputerID()
+    local zones, msg = {}, ""
+    local cx, cz = 0, 0                           -- block at the center of the view
+    local layer                                   -- nil = surface view, else the y shown
+    local view = "map"                            -- map | areas
+    local tapped                                  -- { x, y, z, name } of the last tapped block
+    local prot                                    -- protect flow: { step = 1 | 2 | "name", a = {x, z}, b = {x, z} }
+    local input = ""
+    local target = 0                              -- index into the center targets
+    local delAsk                                  -- area index waiting for a second "sure?" tap
+    local areaScroll = 0
+    local heard = {}                              -- statuses heard by this app (when there is no kernel cache)
+    local grid = { x = 1, y = 2, w = 1, h = 1, left = 0, top = 0 }
+
+    ------------------------------------------------ drones
+    local function drones()
+      local c = WardenOS.drones
+      if type(c) == "table" and next(c) ~= nil then return c end
+      return heard
+    end
+    local function targets()                      -- places to center on: drones, then their homes
+      local out = {}
+      local ids = {}
+      for id in pairs(drones()) do ids[#ids + 1] = id end
+      table.sort(ids)
+      for _, id in ipairs(ids) do
+        local d = drones()[id]
+        if d.calibrated and type(d.abs) == "table" and tonumber(d.abs.x) then
+          out[#out + 1] = { "drone #" .. id, tonumber(d.abs.x), tonumber(d.abs.z) }
+        end
+      end
+      for _, id in ipairs(ids) do
+        local o = drones()[id].origin
+        if type(o) == "table" and tonumber(o.x) and tonumber(o.z) then
+          out[#out + 1] = { "home of #" .. id, tonumber(o.x), tonumber(o.z) }
+        end
+      end
+      return out
+    end
+    local function marks()
+      local m = {}
+      for _, d in pairs(drones()) do
+        if type(d.origin) == "table" and tonumber(d.origin.x) then
+          m[math.floor(d.origin.x) .. "," .. math.floor(d.origin.z)] = "H"
+        end
+      end
+      for _, d in pairs(drones()) do
+        if d.calibrated and type(d.abs) == "table" and tonumber(d.abs.x) then
+          m[math.floor(d.abs.x) .. "," .. math.floor(d.abs.z)] = "D"
+        end
+      end
+      return m
+    end
+
+    -- start: on a drone, else on the chunk with the most blocks
+    do
+      local t = targets()[1]
+      if t then
+        cx, cz = math.floor(t[2]), math.floor(t[3])
+      else
+        local best, n = nil, 0
+        for k, c in pairs(map.chunks()) do if c > n then best, n = k, c end end
+        local a, b = best and best:match("^(%-?%d+)_(%-?%d+)$")
+        if a then cx, cz = tonumber(a) * 16 + 8, tonumber(b) * 16 + 8 end
+      end
+    end
+
+    ------------------------------------------------ drawing helpers
+    local HEX = {}
+    for i = 0, 15 do HEX[2 ^ i] = ("0123456789abcdef"):sub(i + 1, i + 1) end
+    local function put(x, y, s, fg, bg)
+      term.setCursorPos(x, y)
+      term.setTextColor(fg or T.text)
+      term.setBackgroundColor(bg or T.bg)
+      term.write(s)
+    end
+    local function zone(x, y, w, fn) zones[#zones + 1] = { x, x + w - 1, y, fn } end
+    local function button(x, y, label, fn, fg, bg)
+      label = " " .. label .. " "
+      put(x, y, label, fg or T.text, bg or T.panel)
+      zone(x, y, #label, fn)
+      return x + #label + 1
+    end
+    -- buttons flow left to right on one row, as many as fit
+    local function buttons(y, w, items)
+      local x = 1
+      for _, b in ipairs(items) do
+        if x + #b[1] + 1 > w then break end
+        x = button(x, y, b[1], b[2], b.fg, b.bg)
+      end
+    end
+
+    local function palette()                      -- map char -> text color (the theme can change)
+      return {
+        ["#"] = T.dim, [":"] = colors.brown, [","] = colors.lime, ["~"] = colors.blue, ["^"] = colors.orange,
+        ["T"] = colors.green, ["o"] = colors.magenta, ["="] = T.warn, ["."] = T.panel, ["?"] = T.bg,
+      }
+    end
+
+    -- protect flow, last step: input is "name" or "name y1 y2"
+    local function saveArea()
+      local name, y1, y2 = input:match("^%s*(.-)%s+(%-?%d+)%s+(%-?%d+)%s*$")
+      if not name then name = input:match("^%s*(.-)%s*$") end
+      local i, err = map.protect({ name = name ~= "" and name or "area", x1 = prot.a.x, z1 = prot.a.z,
+                                   x2 = prot.b.x, z2 = prot.b.z, y1 = tonumber(y1), y2 = tonumber(y2) })
+      msg = i and ("protected: " .. map.protected().boxes[i].name) or ("not saved: " .. tostring(err))
+      prot, input = nil, ""
+    end
+
+    ------------------------------------------------ map view
+    local function drawMap(w, h)
+      term.setCursorPos(1, 1)
+      term.setBackgroundColor(T.panel)
+      term.clearLine()
+      put(2, 1, "Map", T.accent, T.panel)
+      local mode = layer and ("y=" .. layer) or "surface"
+      local right = w - (layer and 14 or 6) + 1
+      put(6, 1, (mode .. "  " .. cx .. "," .. cz):sub(1, math.max(0, right - 7)), T.dim, T.panel)
+      local x = right
+      if layer then
+        x = button(x, 1, "-", function() layer = math.max(map.YMIN, layer - 1) end, T.text, T.panel)
+        x = button(x, 1, "+", function() layer = math.min(map.YMAX, layer + 1) end, T.text, T.panel)
+      end
+      button(x, 1, layer and "Surf" or "Layer", function()
+        if layer then layer = nil
+        else layer = (tapped and tapped.y) or map.surface(cx, cz) or 64 end
+      end, T.accent, T.panel)
+
+      -- the grid: one cell per block, north at the top
+      local gw, gh = w, math.max(1, h - 4)
+      local left, top = cx - math.floor(gw / 2), cz - math.floor(gh / 2)
+      grid = { x = 1, y = 2, w = gw, h = gh, left = left, top = top }
+      local mk = marks()
+      local COLOR = palette()
+      local fgOf, bgOf = HEX[T.text] or "0", HEX[T.bg] or "f"
+      for r = 1, gh do
+        local z = top + r - 1
+        local text, fg, bg = {}, {}, {}
+        for c = 1, gw do
+          local bx = left + c - 1
+          local ch = map.cell(bx, z, layer)
+          local f, b = COLOR[ch] or T.text, T.bg
+          local m = mk[bx .. "," .. z]
+          if m then
+            ch, f, b = m, T.bg, m == "D" and T.accent or T.warn
+          else
+            if map.isProtected(bx, layer, z) then b = colors.purple end
+            if ch == "?" then ch = " " end
+          end
+          if prot and prot.a and prot.a.x == bx and prot.a.z == z then b = T.accent end
+          if tapped and tapped.x == bx and tapped.z == z and not m then b = T.accent f = T.bg end
+          text[c], fg[c], bg[c] = ch, HEX[f] or fgOf, HEX[b] or bgOf
+        end
+        term.setCursorPos(1, 1 + r)
+        term.blit(table.concat(text), table.concat(fg), table.concat(bg))
+      end
+      local function tapAt(px, py)                -- screen cell -> block
+        local bx, bz = left + px - 1, top + (py - 1) - 1
+        if prot and (prot.step == 1 or prot.step == 2) then
+          if prot.step == 1 then
+            prot.a, prot.step = { x = bx, z = bz }, 2
+            msg = ("corner 1: %d %d - tap the other corner"):format(bx, bz)
+          else
+            prot.b, prot.step, input = { x = bx, z = bz }, "name", ""
+            msg = ""
+          end
+          return
+        end
+        local ch, name, y = map.cell(bx, bz, layer)
+        tapped = { x = bx, z = bz, y = y, name = name }
+        local d = drones()
+        local who = ""
+        for id, s in pairs(d) do
+          if s.calibrated and type(s.abs) == "table" and math.floor(tonumber(s.abs.x) or 1e9) == bx
+             and math.floor(tonumber(s.abs.z) or 1e9) == bz then who = " drone #" .. id end
+        end
+        local p = map.isProtected(bx, y, bz)
+        msg = (p and ("protected: " .. p.name) or "") .. who
+        if ch == "?" and who == "" then msg = (msg ~= "" and msg .. " " or "") .. "(not seen yet)" end
+      end
+      for r = 1, gh do
+        zones[#zones + 1] = { 1, gw, 1 + r, function(px, py) tapAt(px, py) end }
+      end
+
+      -- info row, buttons, status row
+      local iy = h - 2
+      if prot and prot.step == "name" then
+        local s = "Name (y1 y2 optional): " .. input
+        if #s > w - 1 then s = s:sub(-(w - 1)) end
+        put(1, iy, s, T.text, T.panel)
+        put(#s + 1, iy, string.rep(" ", math.max(0, w - #s)), T.text, T.panel)
+      elseif tapped then
+        local s = ("%d %s %d  %s"):format(tapped.x, tapped.y and tostring(tapped.y) or "?", tapped.z,
+                                           tapped.name or "unknown")
+        put(1, iy, s:sub(1, w), T.text)
+      else
+        put(1, iy, ("%d blocks known%s"):format(map.count(), map.full and " - map FULL" or ""):sub(1, w), T.dim)
+      end
+      local step = math.max(4, math.floor(gw / 4))
+      local zstep = math.max(2, math.floor(gh / 3))
+      if prot then
+        local items = {}
+        if prot.step == "name" then items[1] = { "Save", saveArea, fg = T.bg, bg = T.accent } end
+        items[#items + 1] = { "Cancel", function() prot, input, msg = nil, "", "" end, fg = T.bad }
+        buttons(h - 1, w, items)
+        if prot and prot.step ~= "name" then
+          msg = prot.step == 1 and "Tap the first corner of the area" or msg
+        end
+      else
+        buttons(h - 1, w, {
+          { "<", function() cx = cx - step end }, { "^", function() cz = cz - zstep end },
+          { "v", function() cz = cz + zstep end }, { ">", function() cx = cx + step end },
+          { "Protect", function() prot, tapped, msg = { step = 1 }, nil, "Tap the first corner of the area" end,
+            fg = T.accent },
+          { "Center", function()
+            local ts = targets()
+            if #ts == 0 then msg = "No calibrated drone or home known" return end
+            target = target % #ts + 1
+            local t = ts[target]
+            cx, cz, msg = math.floor(t[2]), math.floor(t[3]), "centered on " .. t[1]
+          end },
+          { "Areas", function() view, delAsk, areaScroll = "areas", nil, 0 end },
+        })
+      end
+      local status = msg ~= "" and msg or "#stone :dirt ~water ^lava Ttree oore =built"
+      put(1, h, status:sub(1, w), msg ~= "" and T.warn or T.dim)
+    end
+
+    ------------------------------------------------ protected areas
+    local function drawAreas(w, h)
+      term.setCursorPos(1, 1)
+      term.setBackgroundColor(T.panel)
+      term.clearLine()
+      put(1, 1, " < ", T.accent, T.panel)
+      zone(1, 1, 3, function() view, delAsk = "map", nil end)
+      local p = map.protected()
+      put(5, 1, ("Protected areas (%d)"):format(#p.boxes):sub(1, w - 5), T.text, T.panel)
+      if #p.boxes == 0 then
+        put(2, 3, "No protected areas yet.", T.dim)
+        put(2, 5, "Drones never dig inside them. Tap", T.dim)
+        put(2, 6, "Protect on the map and two corners.", T.dim)
+      end
+      local rows = math.floor((h - 3) / 2)
+      areaScroll = math.max(0, math.min(areaScroll, #p.boxes - rows))
+      for i = 1, rows do
+        local n = areaScroll + i
+        local b = p.boxes[n]
+        if not b then break end
+        local y = 2 + (i - 1) * 2
+        put(1, y, ("%d %s"):format(n, b.name):sub(1, w - 10), T.text)
+        local label = delAsk == n and "sure?" or "delete"
+        local bx = w - #label - 1
+        button(bx, y, label, function()
+          if delAsk == n then
+            map.unprotect(n)
+            delAsk, msg = nil, "removed " .. b.name
+          else
+            delAsk = n
+          end
+        end, T.bg, T.bad)
+        put(2, y + 1, ("x %d..%d  y %d..%d  z %d..%d"):format(b.x1, b.x2, b.y1, b.y2, b.z1, b.z2):sub(1, w - 1), T.dim)
+        zone(1, y + 1, w, function() view, cx, cz = "map", math.floor((b.x1 + b.x2) / 2), math.floor((b.z1 + b.z2) / 2) end)
+      end
+      put(1, h, ((msg ~= "" and msg) or "Only you can remove protection (rev " .. p.rev .. ")"):sub(1, w), T.dim)
+    end
+
+    ------------------------------------------------ render + loop
+    local function render()
+      local parent = term.current()
+      local w, h = parent.getSize()
+      local buf = window.create(parent, 1, 1, w, h, false)
+      term.redirect(buf)
+      zones = {}
+      term.setBackgroundColor(T.bg)
+      term.clear()
+      if view == "areas" then drawAreas(w, h) else drawMap(w, h) end
+      term.redirect(parent)
+      buf.setVisible(true)
+      if prot and prot.step == "name" then
+        parent.setCursorPos(math.min(w, #("Name (y1 y2 optional): " .. input) + 1), h - 2)
+        parent.setTextColor(T.text)
+        parent.setCursorBlink(true)
+      else
+        parent.setCursorBlink(false)
+      end
+    end
+
+    if rednet.isOpen() and not (type(WardenOS.drones) == "table" and next(WardenOS.drones)) then
+      rednet.broadcast({ t = "ping" }, PROTO)
+    end
+    local timer = os.startTimer(2)
+    render()
+    while true do
+      local e, a, b, c = os.pullEvent()
+      if e == "rednet_message" and c == PROTO and type(b) == "table" and b.t == "status" and b.kind == "turtle"
+         and a ~= me then
+        local d = {}
+        for k, v in pairs(b) do d[k] = v end
+        d.seen = os.clock()
+        heard[a] = d
+      elseif e == "timer" and a == timer then
+        timer = os.startTimer(2)
+        render()
+      elseif e == "mouse_click" then
+        for _, z in ipairs(zones) do
+          if c == z[3] and b >= z[1] and b <= z[2] then z[4](b, c) break end   -- button, x, y
+        end
+        render()
+      elseif e == "mouse_scroll" then
+        if view == "areas" then areaScroll = areaScroll + a
+        else cz = cz + a * math.max(2, math.floor(grid.h / 3)) end
+        render()
+      elseif e == "char" or e == "paste" then
+        if prot and prot.step == "name" then input = (input .. a):sub(1, 40) render() end
+      elseif e == "key" then
+        if prot and prot.step == "name" then
+          if a == keys.backspace then input = input:sub(1, -2)
+          elseif a == keys.enter then saveArea() end
+        elseif view == "map" then
+          local step, zstep = math.max(4, math.floor(grid.w / 4)), math.max(2, math.floor(grid.h / 3))
+          if a == keys.left then cx = cx - step
+          elseif a == keys.right then cx = cx + step
+          elseif a == keys.up then cz = cz - zstep
+          elseif a == keys.down then cz = cz + zstep end
+        end
+        render()
+      elseif e == "theme_changed" or e == "term_resize" then
+        render()
+      end
+    end
+  end,
+}

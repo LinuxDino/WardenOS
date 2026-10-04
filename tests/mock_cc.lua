@@ -8,7 +8,7 @@ colors = { white = 1, orange = 2, magenta = 4, lightBlue = 8, yellow = 16, lime 
   lightGray = 256, cyan = 512, purple = 1024, blue = 2048, brown = 4096, green = 8192, red = 16384, black = 32768 }
 colours = colors
 keys = { enter = 28, up = 200, down = 208, pageUp = 201, pageDown = 209, q = 16, y = 21, n = 49, d = 32, u = 22,
-  backspace = 14, tab = 15, f12 = 88 }
+  backspace = 14, tab = 15, f12 = 88, left = 203, right = 205 }
 
 ---------------------------------------------------------------- terminals
 local function newTerm(w, h, parent, ox, oy, name)

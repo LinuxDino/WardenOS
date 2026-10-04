@@ -45,7 +45,13 @@ local function reply(id, msg)
   if rednet.isOpen() then rednet.send(id, msg, PROTO) end
 end
 
-local drones = {}                               -- [id] = latest turtle status + seen (os.clock)
+local own = {}                                  -- [id] = latest turtle status + seen (os.clock), when alone
+-- the kernel's shared cache (WardenOS.drones, filled by /os/lib/world.lua) when there is one
+local function shared()
+  local W = rawget(_G, "WardenOS")
+  return type(W) == "table" and type(W.drones) == "table" and W.drones or nil
+end
+local function cache() return shared() or own end
 local requests = {}                             -- pairing requests waiting for the player: { id, timer }
 local relays, relayTimers = {}, {}              -- [relaySeq] = { pocket, seq, drone, cmd, timer }
 local relaySeq = 1000000 + math.random(0, 99999) * 10   -- far from the Drones / Claude apps' numbers
@@ -56,13 +62,14 @@ local sandbox                                   -- hidden window: run_lua output
 
 local function droneList()
   local now, out = os.clock(), {}
-  for id, d in pairs(drones) do
+  for id, d in pairs(cache()) do
     local log = {}
     for i = 1, 5 do if type(d.log) == "table" and d.log[i] then log[i] = tostring(d.log[i]) end end
     out[#out + 1] = {
       id = id, label = d.label, owner = d.owner, task = d.task, state = d.state,
       fuel = d.fuel, fuelLimit = d.fuelLimit, nav = d.nav, homeSet = d.homeSet, pos = d.pos,
-      log = log, lastTask = d.lastTask, online = (now - d.seen) < ONLINE,
+      log = log, lastTask = d.lastTask, online = (now - (d.seen or -1e9)) < ONLINE,
+      abs = d.abs, calibrated = d.calibrated, fuelItems = d.fuelItems, safeDig = d.safeDig,
     }
   end
   table.sort(out, function(a, b) return a.id < b.id end)
@@ -191,11 +198,11 @@ end
 local function onMessage(from, msg)
   local t = msg.t
   if t == "status" then
-    if msg.kind == "turtle" then
+    if msg.kind == "turtle" and not shared() then   -- with a kernel, /os/lib/world.lua keeps the cache
       local d = {}
       for k, v in pairs(msg) do d[k] = v end
       d.seen = os.clock()
-      drones[from] = d
+      own[from] = d
     end
     return false
   elseif t == "ack" then
@@ -275,6 +282,6 @@ function M.event(ev)
 end
 
 -- for tests and the curious
-M._drones, M._relays = drones, relays
+M._drones, M._relays = own, relays
 
 return M

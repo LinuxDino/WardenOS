@@ -425,6 +425,13 @@ end
 
 function M.count() return total end
 
+-- blocks per chunk file: { ["<cx>_<cz>"] = n } (a copy)
+function M.chunks()
+  local t = {}
+  for k, n in pairs(index) do t[k] = n end
+  return t
+end
+
 ---------------------------------------------------------------- disk
 function M.flush()
   local wrote = 0

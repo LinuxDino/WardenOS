@@ -35,17 +35,18 @@ function M.setKey(k) writeFile(KEY, (k:gsub("%s", ""))) end
 function M.forgetKey() if fs.exists(KEY) then fs.delete(KEY) end end
 
 function M.loadConfig()
-  local c = { model = M.MODELS[1], effort = "low", auto = false }
+  local c = { model = M.MODELS[1], effort = "low", auto = false, allDrones = false }
   local d = textutils.unserialize(readFile(CONFIG) or "")
   if type(d) == "table" then
     for _, m in ipairs(M.MODELS) do if d.model == m then c.model = m end end
     for _, e in ipairs(M.EFFORTS) do if d.effort == e then c.effort = e end end
     c.auto = d.auto == true
+    c.allDrones = d.allDrones == true            -- true: every drone this computer owns is Claude's
   end
   return c
 end
 function M.saveConfig(c)
-  writeFile(CONFIG, textutils.serialize({ model = c.model, effort = c.effort, auto = c.auto }))
+  writeFile(CONFIG, textutils.serialize({ model = c.model, effort = c.effort, auto = c.auto, allDrones = c.allDrones == true }))
 end
 
 -- drones the player gave to Claude: { [id] = true }

@@ -10,6 +10,10 @@ return {
     local devices, sel, scroll = {}, nil, 0
     local zones, msg = {}, ""
     local seq, pending = 0, {}
+    local calib                                   -- calibrate form: { input = "x y z facing" } while open
+    local FACES = { [0] = "N", "E", "S", "W" }
+    local FACE_IN = { n = 0, north = 0, e = 1, east = 1, s = 2, south = 2, w = 3, west = 3,
+                      ["0"] = 0, ["1"] = 1, ["2"] = 2, ["3"] = 3 }
 
     local function online(d) return d and (os.clock() - d.seen) < 10 end
 
@@ -38,6 +42,19 @@ return {
       msg = "> " .. cmd
     end
     local function send(cmd, arg) sendTo(sel, cmd, arg) end
+
+    -- "x y z facing" -> { x, y, z, facing = 0-3 } | nil, why
+    local function parseCalib(text)
+      local x, y, z, f = text:match("^%s*(%-?%d+)[%s,]+(%-?%d+)[%s,]+(%-?%d+)[%s,]*(%w*)%s*$")
+      if not x then return nil, "type: x y z facing, e.g. 120 64 -30 N" end
+      local face = FACE_IN[f:lower()]
+      if not face then return nil, "facing: N, E, S or W (F3 'Facing')" end
+      return { x = tonumber(x), y = tonumber(y), z = tonumber(z), facing = face }
+    end
+    local function absText(d)                     -- "120 64 -30 N" when calibrated
+      if not d.calibrated or type(d.abs) ~= "table" or not tonumber(d.abs.x) then return nil end
+      return ("%d %d %d %s"):format(d.abs.x, d.abs.y, d.abs.z, FACES[tonumber(d.abs.f) or -1] or "?")
+    end
 
     local function navText(d)                     -- "3 0 -5" blocks from home
       if not d.homeSet or type(d.nav) ~= "table" then return nil end
@@ -140,7 +157,7 @@ return {
       term.setBackgroundColor(T.panel)
       term.clearLine()
       put(1, 1, " < ", T.accent, T.panel)
-      zone(1, 1, 3, function() sel, msg = nil, "" end)
+      zone(1, 1, 3, function() sel, msg, calib = nil, "", nil end)
       put(4, 1, ("#%d %s"):format(sel, d.label or "turtle"):sub(1, w - 13), T.text, T.panel)
       local on = online(d)
       put(w - 7, 1, on and " online" or "offline", on and T.good or T.bad, T.panel)
@@ -154,21 +171,54 @@ return {
         put(7, 4, string.rep(" ", fill_), T.text, d.fuel < 100 and T.bad or T.good)
         put(7 + fill_, 4, string.rep(" ", bw - fill_), T.text, T.panel)
         put(8 + bw, 4, tostring(d.fuel), d.fuel < 100 and T.bad or T.text)
+        if d.fuelItems then
+          local cx_ = 9 + bw + #tostring(d.fuel)
+          put(cx_, 4, ("coal: %s"):format(tostring(d.fuelItems)):sub(1, math.max(0, w - cx_ + 1)),
+              d.fuelItems == 0 and T.warn or T.dim)
+        end
       else
-        put(7, 4, fuelText(d))
+        put(7, 4, fuelText(d) .. (d.fuelItems and ("  coal: " .. tostring(d.fuelItems)) or ""))
       end
-      local where = type(d.pos) == "table" and ("GPS " .. table.concat(d.pos, " ")) or "no GPS"
+      local abs = absText(d)
+      local where
+      if abs then
+        where = abs
+      else
+        where = (d.calibrated == false and "not calibrated  " or "")
+          .. (type(d.pos) == "table" and ("GPS " .. table.concat(d.pos, " ")) or "no GPS")
+      end
       local nt = navText(d)
       where = where .. (nt and ("  home: " .. nt) or "  no home set")
-      put(1, 5, "Pos   ", T.dim) put(7, 5, where:sub(1, w - 7))
+      put(1, 5, "Pos   ", T.dim) put(7, 5, where:sub(1, w - 7), abs and T.text or T.dim)
       put(1, 6, "Slots ", T.dim)
-      put(7, 6, ("%s/16 (slot %s)"):format(tostring(d.slots or "?"), tostring(d.selected or "?")))
+      local slots = ("%s/16 (slot %s)"):format(tostring(d.slots or "?"), tostring(d.selected or "?"))
+      put(7, 6, slots)
+      if d.safeDig ~= nil then
+        put(9 + #slots, 6, (d.safeDig and "safe dig on" or "safe dig OFF"):sub(1, math.max(0, w - 8 - #slots)),
+            d.safeDig and T.good or T.warn)
+      end
       local owner = d.owner and (d.owner == me and "you" or ("#" .. d.owner)) or "nobody"
       put(1, 7, "Owner ", T.dim) put(7, 7, owner, d.owner == me and T.good or T.warn)
 
       local y = 9
       if d.owner ~= me then
         y = buttons(y, w, { { "Claim this drone", function() send("claim") end, bg = T.accent, fg = T.bg } })
+      elseif calib then
+        put(1, y, "Calibrate: where is the drone now?", T.text)
+        put(1, y + 1, "F3: x y z and facing N/E/S/W", T.dim)
+        local shown = calib.input
+        if #shown > w - 3 then shown = shown:sub(-(w - 3)) end
+        put(1, y + 2, ("> " .. shown .. string.rep(" ", w)):sub(1, w), T.text, T.panel)
+        y = buttons(y + 3, w, {
+          { "Send", function()
+            local arg, why = parseCalib(calib.input)
+            if not arg then msg = why return end
+            send("calibrate", arg)
+            calib = nil
+          end, bg = T.accent, fg = T.bg },
+          { "Use GPS", function() send("calibrate") calib = nil end },
+          { "Cancel", function() calib, msg = nil, "" end, fg = T.bad },
+        })
       else
         y = buttons(y, w, {
           { "Fwd", function() send("forward") end }, { "Back", function() send("back") end },
@@ -196,6 +246,18 @@ return {
           end, fg = isClaude and T.warn or T.accent }
         end
         y = buttons(y, w, items)
+        y = buttons(y, w, {
+          { "Calibrate", function()
+            local pre = ""
+            local a = type(d.abs) == "table" and d.calibrated and d.abs
+            if a and tonumber(a.x) then pre = ("%d %d %d %s"):format(a.x, a.y, a.z, FACES[tonumber(a.f) or -1] or "")
+            elseif type(d.pos) == "table" and #d.pos == 3 then pre = table.concat(d.pos, " ") .. " " end
+            calib, msg = { input = pre }, ""
+          end },
+          { "Scan", function() send("scan") end },
+          { d.safeDig == false and "Safe dig: off" or "Safe dig: on", function() send("safedig", d.safeDig == false) end,
+            fg = d.safeDig == false and T.warn or T.text },
+        })
       end
       if msg ~= "" and y <= h then put(1, y, msg:sub(1, w), T.warn) y = y + 1 end
       y = y + 1
@@ -250,6 +312,16 @@ return {
         render()
       elseif e == "mouse_scroll" then
         scroll = scroll + a
+        render()
+      elseif (e == "char" or e == "paste") and calib then
+        calib.input = (calib.input .. a):sub(1, 40)
+        render()
+      elseif e == "key" and calib then
+        if a == keys.backspace then calib.input = calib.input:sub(1, -2)
+        elseif a == keys.enter then
+          local arg, why = parseCalib(calib.input)
+          if arg then send("calibrate", arg) calib = nil else msg = why end
+        end
         render()
       elseif e == "theme_changed" or e == "term_resize" or e == "peripheral" or e == "peripheral_detach" then
         render()
