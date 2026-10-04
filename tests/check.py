@@ -346,6 +346,16 @@ for script, name in [(read("install.lua"), "install.lua"), (read("pastebin.lua")
     check(M.rebooted and t3.get("/notes.txt") == "keep" and t3.get("/startup.lua") == read("src/os/drone/startup.lua")
           and t3.get("/os/drone/agent.lua") == read("src/os/drone/agent.lua") and "/os/kernel.lua" not in t3
           and "5" in t3.get("/os/drone/config", ""), "turtle install via %s failed: %s %s %s" % (name, err, sorted(t3), "\n".join(M.log.values())[-400:]))
+# a turtle that already got the full desktop from an old installer: desktop removed, agent installed
+desk = {k: v for k, v in pc.items()}
+desk["/notes.txt"] = "keep"
+rt, M = turtle_env([], desk, ["", "y"])
+ok, err = run(rt, read("pastebin.lua"), "pastebin.lua")
+t4 = snapshot_fs(M)
+check(M.rebooted and t4.get("/notes.txt") == "keep" and t4.get("/startup.lua") == read("src/os/drone/startup.lua")
+      and t4.get("/os/drone/agent.lua") == read("src/os/drone/agent.lua") and "/startup.old.lua" not in t4
+      and not [k for k in t4 if k.startswith("/os/") and not k.startswith("/os/drone")],
+      "turtle with desktop: not cleaned up: %s %s" % (err, sorted(t4)))
 print("turtle install: ok" if not [f for f in fail if f.startswith("turtle install")] else "turtle install: FAILED")
 
 # --- download failure must not touch anything

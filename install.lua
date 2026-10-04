@@ -122,9 +122,14 @@ local OS_VERSION = tostring(MANIFEST.version)
 if isTurtle then
   local function droneInstall()
     local owner
+    local hadDesktop = fs.exists("/os/kernel.lua")    -- an old installer put the full desktop on this turtle
     if mode ~= "update" and not yes then
       print()
-      print("This turtle becomes a WardenOS drone. Its startup.lua is replaced (the old one is kept as startup.old.lua). Other files stay.")
+      if hadDesktop then
+        print("This turtle has the WardenOS desktop. It is removed and the drone agent is installed instead. Other files stay.")
+      else
+        print("This turtle becomes a WardenOS drone. Its startup.lua is replaced (the old one is kept as startup.old.lua). Other files stay.")
+      end
       print()
       print("Owner = the computer that controls it.")
       print("Press Enter to claim it later in the Drones app.")
@@ -138,7 +143,19 @@ if isTurtle then
         return
       end
     end
-    if fs.exists("/startup.lua") and not fs.exists("/os/drone/agent.lua") and not fs.exists("/startup.old.lua") then
+    if hadDesktop then
+      -- remove only WardenOS desktop files (they can't run on a turtle); the agent is written below
+      for _, p in ipairs(MANIFEST.files) do
+        local path = "/" .. p
+        if path ~= "/startup.lua" and not FILES[path] and fs.exists(path) and not fs.isDir(path) then fs.delete(path) end
+      end
+      for _, p in ipairs({ "/os/users.dat", "/os/settings.lua", "/os/boot.cfg", "/os/files.dat" }) do
+        if fs.exists(p) then fs.delete(p) end
+      end
+      for _, d in ipairs({ "/os/apps", "/os/lib" }) do
+        if fs.isDir(d) and #fs.list(d) == 0 then fs.delete(d) end
+      end
+    elseif fs.exists("/startup.lua") and not fs.exists("/os/drone/agent.lua") and not fs.exists("/startup.old.lua") then
       fs.copy("/startup.lua", "/startup.old.lua")
     end
     local function put(path, data)
