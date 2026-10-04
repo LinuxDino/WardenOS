@@ -4,15 +4,17 @@
 --   install            clean install (wizard: terms, account, full erase)
 --   install update     update to the latest version, keeps accounts, settings and your files
 --   install <branch>   use another branch of the repository (works with "update" too)
+--   install update -y  update without asking (used by Settings > Update now)
 
 local REPO, BRANCH = "LinuxDino/WardenOS", "main"
 local TOS_VERSION, STEPS = "1.0", 5
 local ABORT = {}
 local erased = false
 
-local mode, branch = "install", BRANCH
+local mode, branch, yes = "install", BRANCH, false
 for _, a in ipairs({ ... }) do
   if a == "update" then mode = "update"
+  elseif a == "-y" then yes = true
   elseif a ~= "" then branch = a end
 end
 local RAW = "https://raw.githubusercontent.com/" .. REPO .. "/" .. branch .. "/"
@@ -510,15 +512,17 @@ local function update()
     os.pullEvent("key")
     abort()
   end
-  clr()
-  local y = logo(2)
-  center(y, "Update WardenOS to " .. OS_VERSION, colors.white)
-  say(y + 2, "Accounts, settings and your own files are kept.", colors.lightGray, true)
-  footer("ENTER update    Q cancel")
-  while true do
-    local _, k = os.pullEvent("key")
-    if k == keys.enter then break end
-    if k == keys.q then abort() end
+  if not yes then
+    clr()
+    local y = logo(2)
+    center(y, "Update WardenOS to " .. OS_VERSION, colors.white)
+    say(y + 2, "Accounts, settings and your own files are kept.", colors.lightGray, true)
+    footer("ENTER update    Q cancel")
+    while true do
+      local _, k = os.pullEvent("key")
+      if k == keys.enter then break end
+      if k == keys.q then abort() end
+    end
   end
 
   clr()
@@ -545,8 +549,13 @@ local function update()
     if not ok then error("Update failed at '" .. j[1] .. "': " .. tostring(err), 0) end
   end
   bar(3, 1, "Done")
-  footer("Updated. Press any key to reboot")
-  os.pullEvent("key")
+  if yes then
+    footer("Updated to " .. OS_VERSION .. ". Rebooting...")
+    sleep(1)
+  else
+    footer("Updated. Press any key to reboot")
+    os.pullEvent("key")
+  end
   os.reboot()
 end
 

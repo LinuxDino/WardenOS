@@ -1,16 +1,12 @@
 -- WardenOS config
 return {
   name    = "WardenOS",
-  version = "1.0.0",
+  version = "1.1.0",
   repo    = "LinuxDino/WardenOS",  -- GitHub repo used by "Update WardenOS"
   branch  = "main",
 
   side    = "right",    -- preferred monitor side; any other attached monitor is used if none is there
-  scale   = 0.5,        -- monitor text scale (0.5 = most space)
-  mirror  = "fit",      -- "fit"  = monitor mirrored 1:1 on the computer screen (auto text scale)
-                        -- "crop" = mirrored, computer shows top-left part only
-                        -- false  = monitor only
-                        -- no (big enough) monitor attached = runs on the computer screen
+                        -- display mode and monitor text size are in the Settings app
   default = "dark",
   themes  = {
     dark = {

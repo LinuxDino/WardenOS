@@ -1,5 +1,6 @@
--- Mirrored display helper: computer screen + monitor, drawn in a window of the
--- COMMON size so nothing is cropped on either screen.
+-- Mirrored display helper for the boot menu and installer: the same picture on the
+-- computer screen and, centered, on the monitor. Text on the monitor is never scaled
+-- above 1x, so it stays crisp and nothing gets cropped.
 local both = {
   write = 1, blit = 1, clear = 1, clearLine = 1, scroll = 1,
   setCursorPos = 1, setCursorBlink = 1,
@@ -20,29 +21,32 @@ function M.open(minW, minH, side)
   end
 
   local W, H = tw, th
+  local mwin
   if mon then
     mon.setTextScale(0.5)
     local mw, mh = mon.getSize()
     if mw >= minW and mh >= minH then
       W, H = math.min(tw, mw), math.min(th, mh)
-      for _, s in ipairs({ 5, 4.5, 4, 3.5, 3, 2.5, 2, 1.5, 1, 0.5 }) do   -- biggest text that still fits
-        mon.setTextScale(s)
-        local a, b = mon.getSize()
-        if a >= W and b >= H then break end
+      mon.setTextScale(1)                         -- 1x if the picture fits, else 0.5x
+      mw, mh = mon.getSize()
+      if mw < W or mh < H then
+        mon.setTextScale(0.5)
+        mw, mh = mon.getSize()
       end
       mon.setBackgroundColor(colors.black)
       mon.clear()
+      mwin = window.create(mon, math.floor((mw - W) / 2) + 1, math.floor((mh - H) / 2) + 1, W, H, true)
     else
       mon = nil                                   -- monitor too small: computer only
     end
   end
 
   local ui = scr
-  if mon then
+  if mwin then
     ui = setmetatable({}, { __index = function(_, k)
       local f = scr[k]
       if type(f) ~= "function" then return f end
-      local g = mon[k]
+      local g = mwin[k]
       if both[k] and g then return function(...) g(...) return f(...) end end
       return f
     end })

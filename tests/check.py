@@ -98,53 +98,88 @@ for (CW, CH, MW, MH) in [(51, 19, 0, 0), (51, 19, 57, 24), (51, 19, 29, 13), (51
     check(M.label == "warden-7", tag + " install: computer label not set")
     check("secret1" not in fs["/os/users.dat"], tag + " install: plain password stored")
 
-    # --- boot -> login -> open every app -> F12
-    W, H = (CW, CH)
-    if MW and MW // 1 >= 30 and MH >= 12:
-        W, H = None, None   # monitor size decided by fit logic, find it from the kernel run below
-    n_apps = len([f for f in listed if f.startswith("os/apps/")])
-    ev = [["key", ENTER]] + [["char", c] for c in "secret1"] + [["key", ENTER]]
-    # dock: entries start at row 2, step 3 or 2 -> click both candidates' rows is wrong, so compute per size
-    def dock_clicks(H):
-        step = 3 if n_apps * 3 <= H - 2 else 2
-        clicks = []
-        for i in range(n_apps):
-            y = 2 + i * step
-            if y + 1 < H:
-                clicks.append(["mouse_click", 1, 3, y])
-        return clicks
-    # the kernel draws on the computer screen when mirroring, so its size bounds the desktop
-    rt2, M2 = new_env(CW, CH, MW, MH, [], [], fs)
-    probe = rt2.eval("""function()
-      local mon = peripheral.find('monitor')
-      local tw, th = term.getSize()
-      if mon then
-        for _, s in ipairs({0.5,1,1.5,2,2.5,3,3.5,4,4.5,5}) do
-          mon.setTextScale(s) local a, b = mon.getSize()
-          if a <= tw and b <= th and a >= 30 and b >= 12 then return a, b end
-        end
-        mon.setTextScale(0.5) local a, b = mon.getSize()
-        a, b = math.min(a, tw), math.min(b, th)
-        if a >= 30 and b >= 12 then return a, b end
-      end
-      return tw, th end""")
-    W, H = probe()
-    clicks = dock_clicks(H)
-    check(len(clicks) == n_apps, "%s kernel: only %d of %d apps fit in the dock" % (tag, len(clicks), n_apps))
-    # open each app, also tap into it, scroll it, then hit the WardenOS menu and close it
-    ev += [c for click in clicks for c in (click, ["mouse_click", 1, 20, 8], ["mouse_scroll", 1, 20, 8])]
-    ev += [["timer", 1], ["mouse_click", 1, 2, 1], ["mouse_click", 1, 40, H], ["key", F12]]
-    rt3, M3 = new_env(CW, CH, MW, MH, ev, [], fs)
-    ok, err = run(rt3, fs["/startup.lua"], "startup.lua")
-    text = screen_text(M3)
-    log = "\n".join(M3.log.values())
-    check(ok, "%s boot: %s" % (tag, err))
-    check("Kernel error" not in log and "Boot menu error" not in log, "%s boot: kernel crashed: %s" % (tag, log[-400:]))
-    check("stopped" in log, "%s boot: kernel did not reach a clean exit (log: %s)" % (tag, log[-300:]))
-    check("crashed" not in text, "%s boot: an app crashed:\n%s" % (tag, text))
-    check(M3.violations == 0, "%s boot: %d chars drawn off-screen" % (tag, M3.violations))
-    for name in ["shell.lua", "lua.lua", "edit.lua"]:
-        check(("[/rom/programs/%s]" % name) in log, "%s boot: %s app did not start" % (tag, name))
+    # --- boot -> login -> open every app from the app view -> Settings -> F12, in every display mode
+    app_ids = [f[len("os/apps/"):-4] for f in listed if f.startswith("os/apps/")]
+    app_order = {i: int(re.search(r"order = (\d+)", read("src/os/apps/%s.lua" % i)).group(1)) for i in app_ids}
+    app_ids.sort(key=lambda i: (app_order[i], i))
+    login_ev = [["key", ENTER]] + [["char", c] for c in "secret1"] + [["key", ENTER]]
+
+    def layout(display, scale):
+        if MW and display != "computer":
+            for sc in (scale, 0.5):
+                a, b = int(MW // (sc * 2)), int(MH // (sc * 2))
+                if display == "mirror":
+                    a, b = min(a, CW), min(b, CH)
+                if a >= 30 and b >= 12:
+                    return a, b, "mirror" if display == "mirror" else "monitor"
+        return CW, CH, "computer"
+
+    def tiles(W, H):
+        cols = max(1, (W - 8) // 12)
+        th = 3 if cols * ((H - 2) // 4) >= len(app_ids) else 1
+        out = []
+        for i, a in enumerate(app_ids):
+            c, r = i % cols, i // cols
+            y = 4 + r * (th + 1)
+            if y + th - 1 <= H:
+                out.append((a, 8 + c * 12, y))
+        return out
+
+    for display, scale in [("auto", 0.5), ("mirror", 0.5), ("monitor", 1), ("computer", 0.5)]:
+        mtag = "%s [%s %sx]" % (tag, display, scale)
+        W, H, mode = layout(display, scale)
+        tap = (lambda x, y: ["monitor_touch", "right", x, y]) if mode == "monitor" else (lambda x, y: ["mouse_click", 1, x, y])
+        fsd = dict(fs)
+        fsd["/os/settings.lua"] = '{ display = "%s", scale = %s }' % (display, scale)
+        ts = tiles(W, H)
+        check(len(ts) == len(app_ids), "%s: app view shows %d of %d apps" % (mtag, len(ts), len(app_ids)))
+        ev = list(login_ev)
+        for (_, x, y) in ts:                     # dock "Apps" -> tap the tile -> tap + scroll inside
+            ev += [tap(3, 2), tap(x + 1, y), tap(20, 8), ["mouse_scroll", 1, 20, 8]]
+        ev += [["timer", 1], tap(2, 1), tap(40, H)]          # open + close the WARDENOS menu
+        sw, sh = min(44, W - 6), min(17, H - 1)
+        settings_flow = display == "auto" and sw >= 36 and sh >= 14
+        if settings_flow:
+            n = len(app_ids)                    # windows already open -> where the new one lands
+            sx = max(7, min(8 + (n % 5) * 3, W - sw + 1))
+            sy = max(2, min(3 + (n % 5) * 2, H - sh + 1))
+            row = lambda r: sy + r              # content row r is screen row sy + r
+            ev += [["os_launch", "settings"],
+                   tap(sx + 1, row(10)),                        # System: Check for updates
+                   tap(sx + 9, row(1)), tap(sx + 2, row(6)),    # Display: Mirror
+                   tap(sx + 18, row(1)), tap(sx + 2, row(5)),   # Theme: Light
+                   tap(sx + 25, row(1)), tap(sx + 2, row(4)),   # Dock: toggle first app
+                   tap(sx + 31, row(1)), tap(sx + 2, row(5))]   # Boot: CraftOS
+        ev += [["key", F12]]
+        rt3, M3 = new_env(CW, CH, MW, MH, ev, [], fsd)
+        ok, err = run(rt3, fsd["/startup.lua"], "startup.lua")
+        text = screen_text(M3)
+        log = "\n".join(M3.log.values())
+        check(ok, "%s boot: %s" % (mtag, err))
+        check("Kernel error" not in log and "Boot menu error" not in log, "%s boot: kernel crashed: %s" % (mtag, log[-400:]))
+        check("stopped" in log, "%s boot: kernel did not reach a clean exit (log: %s)" % (mtag, log[-300:]))
+        check("crashed" not in text, "%s boot: an app crashed:\n%s" % (mtag, text))
+        check(M3.violations == 0, "%s boot: %d chars drawn off-screen %s" % (mtag, M3.violations,
+              [l for l in M3.log.values() if "OFFSCREEN" in l][:3]))
+        for name in ["shell.lua", "lua.lua", "edit.lua"]:
+            check(("[/rom/programs/%s]" % name) in log, "%s boot: %s app did not start" % (mtag, name))
+        if settings_flow:
+            fs3 = snapshot_fs(M3)
+            written = "".join(M3.written.values()) + text
+            st = rt3.eval("function(s) return textutils.unserialize(s) end")(fs3.get("/os/settings.lua", "{}"))
+            bt = rt3.eval("function(s) return textutils.unserialize(s) end")(fs3.get("/os/boot.cfg", "{}"))
+            check("Up to date (%s)" % manifest.version in text, mtag + " settings: update check did not report up to date")
+            check(st and st.display == "mirror", mtag + " settings: display mode not saved")
+            check(st and st.theme == "light", mtag + " settings: theme not saved")
+            check(st and len(st.dock) == 3, mtag + " settings: dock pin not toggled")
+            check(bt and bt.default == "craftos", mtag + " settings: boot default not saved")
+
+    # --- Settings "Update now": kernel exits, installer updates without asking, reboots
+    rt7, M7 = new_env(CW, CH, MW, MH, login_ev + [["os_update"]], [], dict(fs))
+    ok, err = run(rt7, fs["/startup.lua"], "startup.lua")
+    users7 = snapshot_fs(M7).get("/os/users.dat", "")
+    check(M7.rebooted and '"dino"' in users7 and '"hash"' in users7 and "Downloaded" in "\n".join(M7.log.values()),
+          "%s update from settings failed: %s" % (tag, "\n".join(M7.log.values())[-1500:]))
 
     # --- wrong password is rejected, the right one still works afterwards
     ev = [["key", ENTER]] + [["char", c] for c in "nope"] + [["key", ENTER]]
