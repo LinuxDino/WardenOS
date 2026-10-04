@@ -6,7 +6,7 @@ local DEFAULTS = {
   theme   = "dark",
   display = "auto",     -- auto | monitor | mirror | computer
   scale   = 0.5,        -- monitor text scale
-  dock    = { "terminal", "files", "drones", "peripherals", "settings" },
+  dock    = { "terminal", "files", "drones", "claude", "settings" },
 }
 M.DISPLAYS = { "auto", "monitor", "mirror", "computer" }
 M.SCALES   = { 0.5, 1, 1.5, 2 }

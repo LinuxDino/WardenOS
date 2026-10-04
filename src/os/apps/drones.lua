@@ -27,12 +27,21 @@ return {
       return out
     end
 
-    local function send(cmd, arg)
+    local claudeLib = fs.exists("/os/lib/claude.lua") and dofile("/os/lib/claude.lua")
+    local function claudeDrones() return claudeLib and claudeLib.getDrones() or {} end
+
+    local function sendTo(id, cmd, arg)
       if not rednet.isOpen() then msg = "No modem attached" return end
       seq = seq + 1
       pending[seq] = cmd
-      rednet.send(sel, { t = "cmd", to = sel, seq = seq, cmd = cmd, arg = arg }, PROTO)
+      rednet.send(id, { t = "cmd", to = id, seq = seq, cmd = cmd, arg = arg }, PROTO)
       msg = "> " .. cmd
+    end
+    local function send(cmd, arg) sendTo(sel, cmd, arg) end
+
+    local function navText(d)                     -- "3 0 -5" blocks from home
+      if not d.homeSet or type(d.nav) ~= "table" then return nil end
+      return ("%s %s %s"):format(tostring(d.nav.x), tostring(d.nav.y), tostring(d.nav.z))
     end
 
     ------------------------------------------------ drawing helpers
@@ -95,6 +104,7 @@ return {
         put(1, y, on_ and " *" or " -", on_ and T.good or T.dim)
         local name = ("#%d %s"):format(d.id, d.label or (d.kind == "turtle" and "turtle" or "computer"))
         put(4, y, (d.kind == "turtle" and "T " or "C ") .. name:sub(1, 20), on_ and T.text or T.dim)
+        if d.kind == "turtle" and claudeDrones()[d.id] then put(4 + 2 + math.min(#name, 20) + 1, y, "AI", T.accent) end
         local info
         if d.kind == "turtle" then
           info = (d.task or "?") .. "  fuel " .. fuelText(d)
@@ -106,6 +116,13 @@ return {
         if d.kind == "turtle" then zone(1, y, w, function() sel, msg = d.id, "" end) end
       end
       buttons(h, w, {
+        { "all home", function()
+          local n = 0
+          for _, d in ipairs(all) do
+            if d.kind == "turtle" and d.owner == me and online(d) then sendTo(d.id, "home") n = n + 1 end
+          end
+          msg = n > 0 and ("Calling " .. n .. " drone(s) home") or "No drones of yours online"
+        end, fg = T.accent },
         { "install disk", function()
           local ok, res = pcall(dofile, "/os/drone/disk.lua")
           if ok and type(res) == "function" then
@@ -116,7 +133,7 @@ return {
           end
         end },
       })
-      if msg ~= "" then put(17, h, msg:sub(1, w - 17), T.warn) end
+      if msg ~= "" then put(28, h, msg:sub(1, w - 28), T.warn) end
     end
 
     ------------------------------------------------ detail view
@@ -143,7 +160,10 @@ return {
       else
         put(7, 4, fuelText(d))
       end
-      put(1, 5, "Pos   ", T.dim) put(7, 5, type(d.pos) == "table" and table.concat(d.pos, " ") or "no GPS")
+      local where = type(d.pos) == "table" and ("GPS " .. table.concat(d.pos, " ")) or "no GPS"
+      local nt = navText(d)
+      where = where .. (nt and ("  home: " .. nt) or "  no home set")
+      put(1, 5, "Pos   ", T.dim) put(7, 5, where:sub(1, w - 7))
       put(1, 6, "Slots ", T.dim)
       put(7, 6, ("%s/16 (slot %s)"):format(tostring(d.slots or "?"), tostring(d.selected or "?")))
       local owner = d.owner and (d.owner == me and "you" or ("#" .. d.owner)) or "nobody"
@@ -167,6 +187,18 @@ return {
           { "Stop", function() send("stop") end, fg = T.bad }, { "Locate", function() send("locate") end },
           { "Update", function() send("update") end }, { "Release", function() send("release") end, fg = T.dim },
         })
+        local isClaude = claudeDrones()[sel]
+        local items = {
+          { "Go home", function() send("home") end, bg = T.accent, fg = T.bg },
+          { "Set home here", function() send("sethome") end },
+        }
+        if claudeLib then
+          items[#items + 1] = { isClaude and "Take from Claude" or "Give to Claude", function()
+            claudeLib.setDrone(sel, not isClaude)
+            msg = isClaude and "Claude no longer controls this drone" or "Claude can now use this drone"
+          end, fg = isClaude and T.warn or T.accent }
+        end
+        y = buttons(y, w, items)
       end
       if msg ~= "" and y <= h then put(1, y, msg:sub(1, w), T.warn) y = y + 1 end
       y = y + 1
