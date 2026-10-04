@@ -104,9 +104,114 @@ local function toRel(a)
   return { x = x, y = a.y - origin.y, z = z, f = a.f and (a.f - origin.f) % 4 or nil }
 end
 
+---------------------------------------------------------------- block memory (for the path finder)
+-- What the drone knows about the world, in the RELATIVE nav frame (works uncalibrated):
+-- mem["x,y,z"] = "air" | block name. Filled by every inspection, dig and move; mapdata merges the computer's map.
+-- temp["x,y,z"] = clock time until which the cell counts as blocked (mobs, other turtles).
+-- hard["x,y,z"] = true: a dig there failed for an unknown reason (cleared when the cell is seen again).
+-- tagCache[name] = tags from the last inspection of that block name (lets the planner use the dig rules).
+local MEMFILE = "/os/drone/memory"
+local MEM_CAP, MEM_SAVE = 30000, 8000           -- cells kept in RAM / written to disk (the nearest ones)
+local mem, memN, memDirty, temp, hard, tagCache = {}, 0, false, {}, {}, {}
+
+local function now() return os.clock() end
+local function ckey(x, y, z) return x .. "," .. y .. "," .. z end
+
+local function pruneMem(keep)
+  local list = {}
+  for k in pairs(mem) do
+    local x, y, z = k:match("^(-?%d+),(-?%d+),(-?%d+)$")
+    list[#list + 1] = { math.abs(x - nav.x) + math.abs(y - nav.y) + math.abs(z - nav.z), k }
+  end
+  table.sort(list, function(a, b) return a[1] < b[1] end)
+  for i = keep + 1, #list do mem[list[i][2]] = nil end
+  memN = math.min(#list, keep)
+  return list
+end
+
+local function memSet(x, y, z, name)
+  local k = ckey(x, y, z)
+  hard[k] = nil
+  if type(name) == "string" and name:find("^computercraft:turtle") then   -- other turtles move: block briefly
+    temp[k] = now() + 20
+    name = nil
+  elseif temp[k] then
+    temp[k] = nil
+  end
+  if mem[k] == name then return end
+  if mem[k] == nil then memN = memN + 1 elseif name == nil then memN = memN - 1 end
+  mem[k] = name
+  memDirty = true
+  if memN > MEM_CAP then pruneMem(math.floor(MEM_CAP * 0.9)) end
+end
+
+-- current nav position becomes 0,0,0 facing 0 (sethome): re-key everything into the new frame
+local function rebaseMem()
+  local function move(t)
+    local out = {}
+    for k, v in pairs(t) do
+      local x, y, z = k:match("^(-?%d+),(-?%d+),(-?%d+)$")
+      if x then
+        local rx, rz = rot(x - nav.x, z - nav.z, 4 - nav.f)
+        out[ckey(rx, y - nav.y, rz)] = v
+      end
+    end
+    return out
+  end
+  mem, temp, hard = move(mem), move(temp), move(hard)
+  memDirty = true
+end
+
+-- disk format: "WMEM1\n" .. names joined by "|" .. "\n" .. "x,y,z,i\n"... (i = index into the names)
+local function saveMem()
+  if not memDirty then return end
+  memDirty = false
+  local list
+  if memN > MEM_SAVE then
+    list = pruneMem(MEM_CAP)                    -- sorted by distance, nothing dropped
+  else
+    list = {}
+    for k in pairs(mem) do list[#list + 1] = { 0, k } end
+  end
+  local names, idx, out = {}, {}, {}
+  for i = 1, math.min(#list, MEM_SAVE) do
+    local k = list[i][2]
+    local v = mem[k]
+    if not idx[v] then names[#names + 1] = v idx[v] = #names end
+    out[#out + 1] = k .. "," .. idx[v]
+  end
+  pcall(function()
+    fs.makeDir(fs.getDir(MEMFILE))
+    local f = fs.open(MEMFILE, "w")
+    f.write("WMEM1\n" .. table.concat(names, "|") .. "\n" .. table.concat(out, "\n"))
+    f.close()
+  end)
+end
+
+local function loadMem()
+  if not fs.exists(MEMFILE) then return end
+  local f = fs.open(MEMFILE, "r")
+  local s = f and f.readAll() or ""
+  if f then f.close() end
+  local head, names, body = s:match("^(WMEM1)\n([^\n]*)\n?(.*)$")
+  if not head then return end
+  local list = {}
+  for n in names:gmatch("[^|]+") do list[#list + 1] = n end
+  for x, y, z, i in body:gmatch("(-?%d+),(-?%d+),(-?%d+),(%d+)") do
+    local v = list[tonumber(i)]
+    if v and memN < MEM_CAP then
+      local k = ckey(tonumber(x), tonumber(y), tonumber(z))
+      if not mem[k] then memN = memN + 1 end
+      mem[k] = v
+    end
+  end
+end
+pcall(loadMem)
+
 ---------------------------------------------------------------- observations (for the shared world map)
 local pending, pendingN = {}, 0                 -- "x,y,z" -> { x, y, z, name }
 local quiet = false                             -- true: moves do not inspect (scan, GPS calibration)
+local sensing = false                           -- true while the path follower runs: moves inspect even uncalibrated
 local INSPECT = { front = "inspect", up = "inspectUp", down = "inspectDown" }
 
 -- name of the block on that side ("air" if none), plus the inspect data; nil if the turtle can't inspect
@@ -135,12 +240,24 @@ local function record(x, y, z, name)
   pending[k] = { x, y, z, name }
 end
 
--- inspect one side and record it (only when calibrated); returns the block name
+-- relative (nav) position of the neighbour block on that side
+local function relNeighbour(side)
+  if side == "up" then return nav.x, nav.y + 1, nav.z end
+  if side == "down" then return nav.x, nav.y - 1, nav.z end
+  return nav.x + DX[nav.f], nav.y, nav.z + DZ[nav.f]
+end
+
+-- inspect one side, remember it, and record it for the map (only when calibrated); returns the block name
 local function observe(side)
   local name, d = peek(side)
-  if name and origin then
-    local x, y, z = neighbour(side)
-    record(x, y, z, name)
+  if name then
+    if d and type(d.tags) == "table" then tagCache[name] = d.tags end
+    local rx, ry, rz = relNeighbour(side)
+    memSet(rx, ry, rz, name)
+    if origin then
+      local x, y, z = neighbour(side)
+      record(x, y, z, name)
+    end
   end
   return name, d
 end
@@ -179,13 +296,25 @@ local NATURAL = {
   },
   nameSuffix = "_ore",                          -- any block name ending in this
 }
-local NATURAL_TAG, NATURAL_NAME = {}, {}
+-- vanilla blocks that carry one of the tags above, for when only the name is known (map data from the computer)
+NATURAL.untagged = {
+  "minecraft:stone", "minecraft:granite", "minecraft:diorite", "minecraft:andesite", "minecraft:deepslate",
+  "minecraft:dirt", "minecraft:grass_block", "minecraft:podzol", "minecraft:coarse_dirt", "minecraft:rooted_dirt",
+  "minecraft:mycelium", "minecraft:sand", "minecraft:red_sand", "minecraft:suspicious_sand",
+  "minecraft:crimson_nylium", "minecraft:warped_nylium", "minecraft:ice", "minecraft:packed_ice",
+}
+NATURAL.untaggedSuffix = "_leaves"
+local NATURAL_TAG, NATURAL_NAME, NATURAL_UNTAGGED = {}, {}, {}
 for _, t in ipairs(NATURAL.tags) do NATURAL_TAG[t] = true end
 for _, n in ipairs(NATURAL.names) do NATURAL_NAME[n] = true end
+for _, n in ipairs(NATURAL.untagged) do NATURAL_UNTAGGED[n] = true end
 
 local function isNatural(d)
   local name = d.name or ""
   if NATURAL_NAME[name] or name:sub(-#NATURAL.nameSuffix) == NATURAL.nameSuffix then return true end
+  if d.tags == nil and (NATURAL_UNTAGGED[name] or name:sub(-#NATURAL.untaggedSuffix) == NATURAL.untaggedSuffix) then
+    return true
+  end
   if type(d.tags) == "table" then
     for k, v in pairs(d.tags) do
       local tag = type(k) == "string" and v and k or v           -- { [tag] = true } (CC: Tweaked) or { tag, ... }
@@ -200,19 +329,239 @@ end
 local function protectBoxes() return type(cfg.protect) == "table" and type(cfg.protect.boxes) == "table" and cfg.protect.boxes or {} end
 local function safeDig() return cfg.safeDig ~= false end
 
+-- THE dig rule (dig wrappers and path finder): nil if block d (inspect data; name-only is fine) in a cell may be
+-- dug, else the reason "protected: ...". inBox = name of the protected area the cell is in (or nil).
+local function refusal(d, inBox)
+  if inBox then return "protected: " .. tostring(inBox) end
+  if safeDig() and not isNatural(d) then return "protected: " .. tostring(d.name) .. " (safe dig)" end
+end
+
 -- nil if digging that side is allowed, else the reason "protected: ..."
 local function digRefusal(side)
   local name, d = peek(side)
   if not d then return nil end                  -- air / can't inspect: dig fails or works on its own
+  local inBox
   if origin then
     local x, y, z = neighbour(side)
     for _, b in ipairs(protectBoxes()) do
       if x >= b.x1 and x <= b.x2 and y >= b.y1 and y <= b.y2 and z >= b.z1 and z <= b.z2 then
-        return "protected: " .. tostring(b.name)
+        inBox = b.name
+        break
       end
     end
   end
-  if safeDig() and not isNatural(d) then return "protected: " .. name .. " (safe dig)" end
+  return refusal(d, inBox)
+end
+
+---------------------------------------------------------------- path finding (A* over the block memory)
+-- Costs: forward/up/down = 1, each 90 degree turn = 1 (no back(): it can't see or dig what is behind).
+-- Entering a cell adds: known air / passable (fluids, grass...) 0, unknown 1 (optimistic: probably air),
+-- unknown inside a protected area 3, known block that may be dug 4, anything else impassable (not diggable
+-- under the dig rule, inside a protected area, bedrock & co, lava, other turtles, recently blocked cells).
+local C_UNKNOWN, C_UNKNOWN_BOX, C_DIG = 1, 3, 4
+local H_WEIGHT = 1.5                            -- heuristic = 1.5 * Manhattan: unknown cells cost 2 per step
+local UNBREAKABLE = { ["minecraft:bedrock"] = true, ["minecraft:barrier"] = true, ["minecraft:end_portal_frame"] = true,
+  ["minecraft:end_portal"] = true, ["minecraft:nether_portal"] = true, ["minecraft:reinforced_deepslate"] = true,
+  ["minecraft:command_block"] = true, ["minecraft:structure_block"] = true, ["minecraft:light"] = true,
+  ["minecraft:lava"] = true }
+local PASSABLE = { air = true, ["minecraft:air"] = true, ["minecraft:cave_air"] = true, ["minecraft:void_air"] = true,
+  ["minecraft:water"] = true, ["minecraft:bubble_column"] = true }
+local Y_MIN, Y_MAX = -64, 319                   -- world build limits (absolute)
+
+-- can the turtle move into a block with this name (air or replaceable, but never lava)?
+local function enterable(name)
+  if PASSABLE[name] then return true end
+  if UNBREAKABLE[name] then return false end
+  local tags = tagCache[name]
+  return type(tags) == "table" and (tags["minecraft:replaceable"] == true or tags["minecraft:replaceable_by_trees"] == true)
+end
+
+-- planning context: protected boxes in the relative frame, y limits
+local function planCtx()
+  local ctx = { boxes = {}, t = now() }
+  if origin then
+    for _, b in ipairs(protectBoxes()) do
+      local p = toRel({ x = b.x1, y = b.y1, z = b.z1 })
+      local q = toRel({ x = b.x2, y = b.y2, z = b.z2 })
+      ctx.boxes[#ctx.boxes + 1] = { name = b.name, x1 = math.min(p.x, q.x), x2 = math.max(p.x, q.x), y1 = p.y, y2 = q.y,
+                                    z1 = math.min(p.z, q.z), z2 = math.max(p.z, q.z) }
+    end
+    ctx.ylo, ctx.yhi = Y_MIN - origin.y, Y_MAX - origin.y
+  end
+  return ctx
+end
+
+-- extra cost of entering relative cell x y z, or nil if impassable
+local function cellCost(x, y, z, ctx)
+  if ctx.ylo and (y < ctx.ylo or y > ctx.yhi) then return nil end
+  local k = ckey(x, y, z)
+  local t = temp[k]
+  if t then
+    if t > ctx.t then return nil end
+    temp[k] = nil
+  end
+  if hard[k] then return nil end
+  local inBox
+  for _, b in ipairs(ctx.boxes) do
+    if x >= b.x1 and x <= b.x2 and y >= b.y1 and y <= b.y2 and z >= b.z1 and z <= b.z2 then inBox = b.name break end
+  end
+  local v = mem[k]
+  if v == nil then return inBox and C_UNKNOWN_BOX or C_UNKNOWN end
+  if enterable(v) then return 0 end
+  if v == "solid?" or UNBREAKABLE[v] then return nil end
+  if refusal({ name = v, tags = tagCache[v] }, inBox) then return nil end
+  return C_DIG
+end
+
+-- give CC a chance to run other things (works in a task coroutine and in the main loops)
+local function breathe()
+  os.queueEvent("wardenos_yield")
+  os.pullEvent("wardenos_yield")
+end
+
+local function searchOnce(s, t, margin, maxExp, ctx)
+  local x0, x1 = math.min(s.x, t.x) - margin, math.max(s.x, t.x) + margin
+  local y0, y1 = math.min(s.y, t.y) - margin, math.max(s.y, t.y) + margin
+  local z0, z1 = math.min(s.z, t.z) - margin, math.max(s.z, t.z) + margin
+  if ctx.ylo then y0, y1 = math.max(y0, ctx.ylo), math.min(y1, ctx.yhi) end
+  local SY, SZ = y1 - y0 + 1, z1 - z0 + 1
+  local tx, ty, tz = t.x, t.y, t.z
+  local costs, g, parent, closed = {}, {}, {}, {}
+  local hk, hp, hn = {}, {}, 0                  -- binary heap: state, priority
+  local function push(k, p)
+    hn = hn + 1
+    local i = hn
+    while i > 1 do
+      local up = (i - i % 2) / 2
+      if hp[up] <= p then break end
+      hk[i], hp[i] = hk[up], hp[up]
+      i = up
+    end
+    hk[i], hp[i] = k, p
+  end
+  local function pop()
+    local k = hk[1]
+    local lk, lp = hk[hn], hp[hn]
+    hk[hn], hp[hn] = nil, nil
+    hn = hn - 1
+    local i = 1
+    while true do
+      local c = i * 2
+      if c > hn then break end
+      if c < hn and hp[c + 1] < hp[c] then c = c + 1 end
+      if hp[c] >= lp then break end
+      hk[i], hp[i] = hk[c], hp[c]
+      i = c
+    end
+    if hn > 0 then hk[i], hp[i] = lk, lp end
+    return k
+  end
+  local function cost(ci, x, y, z)
+    local c = costs[ci]
+    if c == nil then
+      c = cellCost(x, y, z, ctx) or false
+      costs[ci] = c
+    end
+    return c
+  end
+  local function h(x, y, z) return H_WEIGHT * (math.abs(x - tx) + math.abs(y - ty) + math.abs(z - tz)) end
+  local function relax(ns, ng, x, y, z)
+    if not closed[ns] and (g[ns] == nil or ng < g[ns]) then
+      g[ns] = ng
+      parent[ns] = true
+      push(ns, ng + h(x, y, z) - ng * 1e-6)    -- ties: prefer the node further along
+      return true
+    end
+  end
+  local start = (((s.x - x0) * SY + (s.y - y0)) * SZ + (s.z - z0)) * 4 + s.f
+  g[start] = 0
+  push(start, h(s.x, s.y, s.z))
+  local from = {}
+  local exp = 0
+  while hn > 0 do
+    local st = pop()
+    if not closed[st] then
+      closed[st] = true
+      exp = exp + 1
+      if exp % 200 == 0 then breathe() end
+      if exp > maxExp then return nil, "search limit", exp end
+      local f = st % 4
+      local ci = (st - f) / 4
+      local zz = ci % SZ
+      local r = (ci - zz) / SZ
+      local yy = r % SY
+      local xx = (r - yy) / SY
+      local x, y, z = xx + x0, yy + y0, zz + z0
+      if x == tx and y == ty and z == tz then
+        local steps, cur = {}, st
+        while cur ~= start do
+          local pf = cur % 4
+          local pci = (cur - pf) / 4
+          local pz = pci % SZ
+          local pr = (pci - pz) / SZ
+          local py = pr % SY
+          local px = (pr - py) / SY
+          local step = { x = px + x0, y = py + y0, z = pz + z0 }
+          local prev = from[cur]
+          local qci = (prev - prev % 4) / 4
+          if qci == pci - SZ then step.up = true          -- y + 1
+          elseif qci == pci + SZ then step.down = true
+          else step.dir = pf end
+          table.insert(steps, 1, step)
+          cur = prev
+        end
+        return steps, nil, exp
+      end
+      local gs = g[st]
+      for d = 0, 3 do
+        local nx, nz = x + DX[d], z + DZ[d]
+        if nx >= x0 and nx <= x1 and nz >= z0 and nz <= z1 then
+          local nci = ci + DX[d] * SY * SZ + DZ[d]
+          local c = cost(nci, nx, y, nz)
+          if c then
+            local turn = (d - f) % 4
+            local ns = nci * 4 + d
+            if relax(ns, gs + (turn == 2 and 2 or turn == 0 and 0 or 1) + 1 + c, nx, y, nz) then from[ns] = st end
+          end
+        end
+      end
+      for dy = -1, 1, 2 do
+        local ny = y + dy
+        if ny >= y0 and ny <= y1 then
+          local nci = ci + dy * SZ
+          local c = cost(nci, x, ny, z)
+          if c then
+            local ns = nci * 4 + f
+            if relax(ns, gs + 1 + c, x, ny, z) then from[ns] = st end
+          end
+        end
+      end
+    end
+  end
+  return nil, "no path", exp
+end
+
+-- A* from relative position from (x, y, z, f) to relative cell to (x, y, z).
+-- opts: margin (default 8, grown to 24 when nothing is found), maxExpand (default 20000), ctx.
+-- Returns a list of steps { x, y, z, dir = 0-3 (relative facing for a forward move) | up = true | down = true }
+-- (the cell entered by each move) or nil, reason ("target blocked", "no path", "search limit").
+local function findPath(from, to, opts)
+  opts = opts or {}
+  local ctx = opts.ctx or planCtx()
+  local s = { x = from.x, y = from.y, z = from.z, f = (from.f or 0) % 4 }
+  local t = { x = to.x, y = to.y, z = to.z }
+  if s.x == t.x and s.y == t.y and s.z == t.z then return {} end
+  if not cellCost(t.x, t.y, t.z, ctx) then return nil, "target blocked" end
+  local open = false
+  for _, o in ipairs { { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } } do
+    local nx, ny, nz = t.x + o[1], t.y + o[2], t.z + o[3]
+    if (nx == s.x and ny == s.y and nz == s.z) or cellCost(nx, ny, nz, ctx) then open = true break end
+  end
+  if not open then return nil, "no path" end
+  local margin, maxExp = opts.margin or 8, opts.maxExpand or 20000
+  local steps, why = searchOnce(s, t, margin, maxExp, ctx)
+  if not steps and why == "no path" and margin < 24 then steps, why = searchOnce(s, t, 24, maxExp, ctx) end
+  return steps, why
 end
 
 ---------------------------------------------------------------- fuel
