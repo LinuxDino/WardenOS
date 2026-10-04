@@ -140,6 +140,14 @@ local function text(t, x, y, s, fg, bg)
   t.write(s)
 end
 
+---------------------------------------------------------------- world: drone status cache + world map (/os/lib/world.lua)
+-- loaded before the pocket server, which reads the shared status cache WardenOS.drones
+local world
+do
+  local ok, m = pcall(dofile, "/os/lib/world.lua")
+  if ok and type(m) == "table" then world = m WardenOS.drones = m.drones end
+end
+
 ---------------------------------------------------------------- pocket server (WardenOS Pocket pairing + relay)
 -- a broken module must never break the desktop: every call is protected
 local psrv
@@ -500,8 +508,8 @@ local function onTouch(x, y)
         user = doLogin()
         clockTimer = os.startTimer(1)
       elseif it.act == "exit" then running = false
-      elseif it.act == "reboot" then os.reboot()
-      elseif it.act == "shutdown" then os.shutdown() end
+      elseif it.act == "reboot" then if world then pcall(world.flush) end os.reboot()
+      elseif it.act == "shutdown" then if world then pcall(world.flush) end os.shutdown() end
     end
     return
   end
@@ -589,6 +597,7 @@ while running do
   local ev = table.pack(os.pullEventRaw())
   local name = ev[1]
   local redraw = false
+  if world and name ~= "terminate" then pcall(world.event, ev) end  -- drone statuses, map, protected areas
   if psrv and name ~= "terminate" then                    -- pocket requests, relays, the pockets' Claude
     local okp, changed = pcall(psrv.event, ev)
     if okp and changed then redraw = true end
@@ -669,6 +678,7 @@ while running do
 end
 
 ---------------------------------------------------------------- shutdown of the desktop
+if world then pcall(world.flush) end
 local function reset(t)
   for i = 0, 15 do
     local c = 2 ^ i
