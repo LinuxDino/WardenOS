@@ -553,6 +553,98 @@ for (cw, ch) in [(51, 19), (26, 20)]:
     check(replies == ["pocket_paired", "pocket_drones"], "%s: replies %s" % (tag, replies))
     violations(env, tag)
 print("kernel hook: ok" if len(fail) == nfail else "kernel hook: FAILED")
+nfail = len(fail)
+
+# ---------------------------------------------------------------- 9. what Claude does with drones: kernel top bar,
+# Drones app, pocket server replies, pocket screens
+def ai_status(state="working"):
+    st = status(7)
+    st.update({"task": "goto 1 2 3", "state": state})
+    if state == "working":
+        st.update({"by": {"id": 7, "who": "claude"}, "taskTime": 34,
+                   "progress": {"phase": "moving", "step": 5, "total": 20, "target": {"x": 1, "y": 2, "z": 3},
+                                "replans": 1}})
+    else:
+        st.update({"task": "manual", "lastTask": {"name": "goto 1 2 3", "ok": True, "info": "", "by": {"id": 7, "who": "claude"}}})
+    return st
+
+
+for (cw, ch) in [(51, 19), (26, 20)]:
+    shots = {}
+    env = Env(events=login + [["rednet_message", 12, ai_status(), "wardenos"], ["host", "shot", "bar"],
+                              ["host", "click", "AI>#12"], ["host", "shot", "detail"],
+                              ["host", "click", " < "], ["host", "shot", "list"],
+                              ["host", "click", "AI>#12"], ["host", "shot", "again"],
+                              ["rednet_message", 12, ai_status("ready"), "wardenos"], ["host", "shot", "done"],
+                              ["key", F12]],
+              files=DESK_FS, CW=cw, CH=ch, pocket=False)
+    env.hosts["shot"] = lambda name: (shots.__setitem__(name, env.screen()), None)[1]
+    ok, err = env.run_file("/startup.lua")
+    tag = "activity %dx%d" % (cw, ch)
+    check(ok and "stopped" in env.log() and "Kernel error" not in env.log(), "%s: %s %s" % (tag, err, env.log()[-300:]))
+    top = shots.get("bar", "").split("\n")[0]
+    want = "AI>#12 goto 1 2 3" if cw >= 40 else "AI>#12"
+    check(want in top and "12:" in top and len(top) == cw, "%s: indicator not in the top bar: %r" % (tag, top))
+    det = shots.get("detail", "")
+    check("Claude:" in det, "%s: Drones did not open on #12:\n%s" % (tag, det))
+    if cw >= 40:
+        check("Claude: goto 1 2 3 - moving step 5/20 - 34s" in det and "to 1 2 3  replans 1" in det,
+              "%s: banner:\n%s" % (tag, det))
+        check("goto 1 2 3  5/20" in shots.get("list", ""), "%s: list row:\n%s" % (tag, shots.get("list", "")))
+    check("Claude:" in shots.get("again", ""), "%s: second tap (drones_open):\n%s" % (tag, shots.get("again", "")))
+    check("AI>" not in shots.get("done", "").split("\n")[0], "%s: indicator stays after the task" % tag)
+    if cw >= 40:
+        check("by Claude" in shots.get("done", ""), "%s: lastTask by Claude:\n%s" % (tag, shots.get("done", "")))
+    violations(env, tag)
+print("activity indicator: ok" if len(fail) == nfail else "activity indicator: FAILED")
+nfail = len(fail)
+
+# pocket server: pocket_drones carries by/progress/taskTime, pocket_claude lists Claude's drones
+env = Env(files=dict(DESK_FS), CW=51, CH=19, pocket=False)
+S, msg, pump = env.rt.execute(PS)
+L = env.lua
+msg(20, L({"t": "pocket_pair"}))
+S.decide(True)
+msg(12, L(ai_status()))
+msg(20, L({"t": "pocket_drones"}))
+d = (env.sent()[-1]["msg"].get("drones") or [{}])[0]
+check(d.get("by") == {"id": 7, "who": "claude"} and d.get("taskTime") == 34 and d.get("progress", {}).get("step") == 5,
+      "server: pocket_drones without by/progress %s" % d)
+msg(20, L({"t": "pocket_claude", "op": "poll"}))
+r = env.sent()[-1]["msg"]
+ds = r.get("drones") or []
+check(r.get("t") == "pocket_claude" and len(ds) == 1 and ds[0]["id"] == 12 and ds[0]["phase"] == "moving"
+      and ds[0]["step"] == 5 and ds[0]["total"] == 20 and ds[0]["action"] == "task goto 1 2 3"
+      and ds[0]["text"] == "#12 task goto 1 2 3 - moving 5/20 34s", "server: pocket_claude drones %s" % ds)
+check(not env.problems, "server activity: %s" % env.problems)
+
+# pocket screens: list tag, detail banner + target, Claude screen drone line
+d12 = dict(drones_reply["drones"][0])
+d12.update({"task": "goto 1 2 3", "state": "working", "by": {"id": 3, "who": "claude"}, "taskTime": 34,
+            "progress": {"phase": "moving", "step": 5, "total": 20, "target": {"x": 1, "y": 2, "z": 3}, "replans": 1},
+            "lastTask": {"name": "dig", "ok": True, "info": "", "by": {"id": 3, "who": "player"}}})
+reply_ai = {"t": "pocket_drones", "server": SRV, "drones": [d12]}
+chat_ai = {"t": "pocket_claude", "busy": False, "status": "", "log": [{"kind": "claude", "text": "Going."}],
+           "drones": [{"id": 12, "action": "goto 1 2 3", "phase": "moving", "step": 5, "total": 20,
+                       "text": "#12 goto 1 2 3 - moving 5/20"}]}
+shots = {}
+env = pocket_env([["host", "click", "Drones"], ["rednet_message", SRV, reply_ai, "wardenos"], ["host", "shot", "list"],
+                  ["host", "click", "#12 miner"], ["host", "shot", "detail"], ["host", "click", " < "],
+                  ["host", "click", " < "], ["host", "click", "Claude"], ["rednet_message", SRV, chat_ai, "wardenos"],
+                  ["host", "shot", "claude"], ["host", "timer"]],
+                 conf='{ mode = "server", server = 3 }')
+env.hosts["shot"] = lambda name: (shots.__setitem__(name, env.screen()), None)[1]
+start(env)
+check("AI goto 1 2 3 5/20" in shots.get("list", ""), "pocket list: no AI tag:\n" + shots.get("list", ""))
+det = shots.get("detail", "")
+check("AI: moving 5/20 34s" in det and "To 1 2 3  r1" in det and "dig ok by you" in det, "pocket detail:\n" + det)
+check("#12 goto 1 2 3 - moving 5/" in shots.get("claude", "") and "Going." in shots.get("claude", ""),
+      "pocket claude: no drone line:\n" + shots.get("claude", ""))
+polls = [m for m in sent_of(env, "pocket_claude") if m["msg"].get("op") == "poll"]
+check(len(polls) >= 2, "pocket claude: no live poll while Claude's drone works (%d polls)" % len(polls))
+violations(env, "pocket activity")
+print("pocket activity: ok" if len(fail) == nfail else "pocket activity: FAILED")
+nfail = len(fail)
 
 print()
 if fail:

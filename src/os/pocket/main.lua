@@ -229,7 +229,10 @@ local function onTick()
   if screen == "servers" and ticks % 2 == 0 then ping() end
   if connected() then
     if screen == "drones" or screen == "drone" then toServer({ t = "pocket_drones" }) end
-    if screen == "claude" and (remoteChat.busy or chatWaiting) then toServer({ t = "pocket_claude", op = "poll" }) end
+    if screen == "claude" and (remoteChat.busy or chatWaiting
+                               or (type(remoteChat.drones) == "table" and #remoteChat.drones > 0)) then
+      toServer({ t = "pocket_claude", op = "poll" })     -- also while Claude's drones work: live progress
+    end
     if ticks % 3 == 0 then toServer({ t = "ping" }) end      -- keeps the connection dot honest
   elseif (screen == "drones" or screen == "drone") and ticks % 2 == 0 then
     ping()
@@ -534,13 +537,20 @@ local function drawDrones()
     local y = 4 + (i - 1) * 2
     put(2, y, "\7", d.online and T.good or T.dim)
     put(4, y, ("#%d %s"):format(d.id, tostring(d.label or "drone")):sub(1, W - 4), d.online and T.text or T.dim)
-    local sub
+    local sub, tag
     if d.owner ~= mine then
       sub = d.owner and ("owned by #" .. d.owner) or "free: tap to claim"
     else
       sub = tostring(d.task or "?") .. "  fuel " .. fuelText(d)
+      local by = type(d.by) == "table" and d.by.who
+      if by == "claude" then tag = "AI " elseif by then tag = "task " end
+      local p = type(d.progress) == "table" and d.progress
+      if by and p and tonumber(p.total) and p.total > 0 then
+        sub = tostring(d.task or "?") .. (" %d/%d"):format(tonumber(p.step) or 0, p.total)
+      end
     end
-    put(4, y + 1, sub:sub(1, W - 4), T.dim)
+    if tag then put(4, y + 1, tag, tag == "AI " and T.accent or T.warn) end
+    put(4 + (tag and #tag or 0), y + 1, sub:sub(1, W - 4 - (tag and #tag or 0)), T.dim)
     zone(1, y, W, 2, function() sel = d.id go("drone") end)
   end
   footer()
@@ -560,8 +570,24 @@ local function drawDrone()
   put(W - 7, 6, d.online and " online" or "offline", d.online and T.good or T.bad)
   if type(d.lastTask) == "table" then
     put(2, 7, "Last", T.dim)
-    put(8, 7, (tostring(d.lastTask.name) .. (d.lastTask.ok and " ok" or " failed")):sub(1, W - 8),
+    local lb = type(d.lastTask.by) == "table" and (d.lastTask.by.who == "claude" and " by AI" or " by you") or ""
+    put(8, 7, (tostring(d.lastTask.name) .. (d.lastTask.ok and " ok" or " failed") .. lb):sub(1, W - 8),
         d.lastTask.ok and T.text or T.bad)
+  end
+  -- who runs the current task, and how far it got (row 2 banner, row 8 target)
+  if type(d.by) == "table" and d.state == "working" then
+    local ai = d.by.who == "claude"
+    local p = type(d.progress) == "table" and d.progress or {}
+    local parts = { ai and "AI:" or "Task:" }
+    if p.phase then parts[#parts + 1] = tostring(p.phase) end
+    if tonumber(p.total) and p.total > 0 then parts[#parts + 1] = ("%d/%d"):format(tonumber(p.step) or 0, p.total) end
+    if tonumber(d.taskTime) then parts[#parts + 1] = math.floor(d.taskTime) .. "s" end
+    put(1, 2, (" " .. table.concat(parts, " ") .. string.rep(" ", W)):sub(1, W), T.bg, ai and T.accent or T.warn)
+    local tg = type(p.target) == "table" and tonumber(p.target.x) and p.target
+    if tg then
+      local r = tonumber(p.replans) and p.replans > 0 and ("  r" .. p.replans) or ""
+      put(2, 8, ("To %d %d %d%s"):format(tg.x, tg.y, tg.z, r):sub(1, W - 2), T.dim)
+    end
   end
   local function cmd(c) return function() command(d.id, c) end end
   local y = 9
@@ -676,7 +702,26 @@ local function drawClaude()
       lines[#lines + 1] = { " " .. l, T.dim }
     end
   end
-  local bottom = H - 2
+  -- the drones Claude is using now, above the status line
+  local dl = {}
+  if not d.approval then
+    if connected() then
+      dl = type(remoteChat.drones) == "table" and remoteChat.drones or {}
+    elseif getCore() and core.tools then
+      local okl, l = pcall(core.tools.lines, devices)
+      if okl and type(l) == "table" then dl = l end
+    end
+  end
+  local nd = math.min(#dl, 2)
+  local statusRow = note ~= "" or (d.error and not d.busy) or (d.busy and d.status and d.status ~= "")
+  local bottom = H - 2 - nd
+  if nd > 0 and not statusRow then bottom = bottom + 1 end
+  for i = 1, nd do
+    local e = dl[i]
+    local txt = type(e) == "table" and tostring(e.text or ("#" .. tostring(e.id) .. " " .. tostring(e.action))) or ""
+    if i == nd and #dl > nd then txt = txt .. " +" .. (#dl - nd) end
+    put(1, bottom + i, txt:sub(1, W), e.phase and T.accent or T.dim)
+  end
   local cardH = 0
   local body
   if d.approval then

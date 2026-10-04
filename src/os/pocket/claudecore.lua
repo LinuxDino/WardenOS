@@ -11,6 +11,7 @@
 --   chat.resume(ev)        give it every event (it runs as a coroutine that waits with os.pullEvent)
 --   chat.dirty             set when something visible changed; the owner clears it
 --   chat.snapshot(n)       { log = last n {kind, text}, busy, status, approval = {name, text} | nil }
+--   core.tools             /os/lib/claudetools.lua (tools.lines(cache): the drones Claude is using now)
 local api = dofile("/os/lib/claude.lua")
 local json = api.json
 local PROTO = "wardenos"
@@ -29,7 +30,7 @@ local function clip(s)
 end
 
 ---------------------------------------------------------------- one conversation
-local M = { api = api, json = json, DECISION = DECISION }
+local M = { api = api, json = json, DECISION = DECISION, tools = tools }
 
 function M.new(opts)
   opts = opts or {}
@@ -47,7 +48,9 @@ function M.new(opts)
     while #E.log > MAX_LOG do table.remove(E.log, 1) end
     E.dirty = true
   end
-  local function setStatus(s) E.status = s E.dirty = true end
+  local function sync() pcall(kit.setBusy, E.busy, E.approval and "Waiting for your OK" or E.status) end
+  local function setStatus(s) E.status = s E.dirty = true sync() end
+  E.kit = kit
 
   -- undo the current turn: back to before the player's last message (the history stays valid)
   local function rollback()
@@ -163,6 +166,7 @@ function M.new(opts)
       worker, filter = nil, nil
       E.busy, E.status, E.approval = false, "", nil
       E.dirty = true
+      sync()
     else
       filter = f
     end
@@ -182,6 +186,7 @@ function M.new(opts)
     add("user", text)
     msgs[#msgs + 1] = { role = "user", content = text }
     E.busy, E.status = true, "Claude is thinking..."
+    sync()
     worker = coroutine.create(function()
       local ok, err = pcall(turn)
       if not ok then add("error", "crashed: " .. tostring(err)) rollback() end   -- keep the history valid

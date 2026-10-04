@@ -729,6 +729,10 @@ local function locate(timeout)
   dirty = true
 end
 
+-- status broadcast. While a task runs it also has: by = { id = computer that started it, who = "claude" |
+-- "player" } (from the cmd message's optional by = "claude"), taskTime (whole seconds since it started) and
+-- progress = { phase = "planning" | "moving" | "digging" | "waiting" | "working", step, total, target, replans }
+-- (step/total/target/replans only while the path follower moves). lastTask carries by too.
 local function status()
   local items, used = {}, 0
   for i = 1, 16 do

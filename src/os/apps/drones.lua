@@ -1,13 +1,28 @@
 -- Drones: everything on the WardenOS network (turtles + computers), live turtle status and remote control
+-- main(id): open the detail view of drone id. While it runs, the kernel sends "drones_open", id instead of
+-- starting a second copy (os_launch "drones", id).
 local PROTO = "wardenos"
 
 return {
   name = "Drones", short = "Drone", icon = "(T)", color = colors.orange, order = 7,
-  w = 46, h = 18,
-  main = function()
+  w = 46, h = 18, openEvent = "drones_open",
+  main = function(arg)
     local T = WardenOS.theme
     local me = os.getComputerID()
     local devices, sel, scroll = {}, nil, 0
+    local want = tonumber(arg)                    -- drone asked for (detail view as soon as it is known)
+    sel = want
+    -- start from the kernel's status cache, so the list (and an asked-for drone) shows at once
+    if type(WardenOS.drones) == "table" then
+      for id, st in pairs(WardenOS.drones) do
+        if type(id) == "number" and type(st) == "table" then
+          local d = { id = id }
+          for k, v in pairs(st) do d[k] = v end
+          d.id, d.seen = id, tonumber(st.seen) or os.clock()
+          devices[id] = d
+        end
+      end
+    end
     local zones, msg = {}, ""
     local seq, pending = 0, {}
     local calib                                   -- calibrate form: { input = "x y z facing" } while open
@@ -36,6 +51,20 @@ return {
 
     local claudeLib = fs.exists("/os/lib/claude.lua") and dofile("/os/lib/claude.lua")
     local function claudeDrones() return claudeLib and claudeLib.getDrones() or {} end
+
+    -- who runs d's task now: "claude" | "player" | nil
+    local function runBy(d)
+      return d.state == "working" and type(d.by) == "table" and (d.by.who == "claude" and "claude" or "player") or nil
+    end
+    local function claudeAction(id)               -- what Claude told the drone (WardenOS.claude, claudetools)
+      local A = type(WardenOS.claude) == "table" and WardenOS.claude or nil
+      local e = A and type(A.drones) == "table" and A.drones[id]
+      return type(e) == "table" and e.action or nil
+    end
+    local function stepText(p)
+      if type(p) ~= "table" or not (tonumber(p.total) and p.total > 0) then return nil end
+      return ("%d/%d"):format(tonumber(p.step) or 0, p.total)
+    end
 
     local function sendTo(id, cmd, arg)
       if not rednet.isOpen() then msg = "No modem attached" return end
@@ -123,15 +152,30 @@ return {
         put(1, y, on_ and " *" or " -", on_ and T.good or T.dim)
         local name = ("#%d %s"):format(d.id, d.label or (d.kind == "turtle" and "turtle" or "computer"))
         put(4, y, (d.kind == "turtle" and "T " or "C ") .. name:sub(1, 20), on_ and T.text or T.dim)
-        if d.kind == "turtle" and claudeDrones()[d.id] then put(4 + 2 + math.min(#name, 20) + 1, y, "AI", T.accent) end
+        local by = d.kind == "turtle" and runBy(d)
+        local tx = 4 + 2 + math.min(#name, 20) + 1
+        local used = tx - 2                       -- last column taken by the name / tag
+        if by == "claude" then
+          put(tx, y, "AI", T.bg, T.accent)        -- busy with a task Claude started
+          used = tx + 1
+        elseif by == "player" then
+          put(tx, y, "task", T.warn)
+          used = tx + 3
+        elseif d.kind == "turtle" and claudeDrones()[d.id] then
+          put(tx, y, "AI", T.dim)                 -- Claude may use it
+          used = tx + 1
+        end
         local info
-        if d.kind == "turtle" then
+        if by then
+          local st = stepText(d.progress)
+          info = (by == "claude" and claudeAction(d.id) or d.task or "?") .. (st and ("  " .. st) or "")
+        elseif d.kind == "turtle" then
           info = (d.task or "?") .. "  fuel " .. fuelText(d)
         else
           info = "WardenOS " .. tostring(d.version or "?")
         end
-        info = info:sub(1, math.max(0, w - 27))
-        if #info > 0 then put(w - #info, y, info, T.dim) end
+        info = info:sub(1, math.max(0, math.min(w - 27, w - used - 2)))
+        if #info > 0 then put(w - #info, y, info, by == "claude" and T.accent or T.dim) end
         if d.kind == "turtle" then zone(1, y, w, function() sel, msg = d.id, "" end) end
       end
       buttons(h, w, {
@@ -166,7 +210,27 @@ return {
       local on = online(d)
       put(w - 7, 1, on and " online" or "offline", on and T.good or T.bad, T.panel)
 
-      put(1, 3, "Task  ", T.dim) put(7, 3, (tostring(d.task) .. " (" .. tostring(d.state) .. ")"):sub(1, w - 7))
+      -- row 2: who runs the task and how far it got, else the last task and who started it
+      local by = runBy(d)
+      local p = type(d.progress) == "table" and d.progress or {}
+      if by then
+        local parts = { (by == "claude" and "Claude: " or "Task: ") .. tostring(d.task or "?") }
+        if p.phase then parts[#parts + 1] = tostring(p.phase) .. (stepText(p) and (" step " .. stepText(p)) or "") end
+        if tonumber(d.taskTime) then parts[#parts + 1] = math.floor(d.taskTime) .. "s" end
+        put(1, 2, (" " .. table.concat(parts, " - ") .. string.rep(" ", w)):sub(1, w), T.bg,
+            by == "claude" and T.accent or T.warn)
+      elseif type(d.lastTask) == "table" then
+        local lb = type(d.lastTask.by) == "table" and (d.lastTask.by.who == "claude" and " - by Claude" or " - by you") or ""
+        put(1, 2, ("Last: %s %s%s"):format(tostring(d.lastTask.name), d.lastTask.ok and "ok" or "failed", lb):sub(1, w),
+            d.lastTask.ok and T.dim or T.bad)
+      end
+      local tline = tostring(d.task) .. " (" .. tostring(d.state) .. ")"
+      local tg = by and type(p.target) == "table" and tonumber(p.target.x) and p.target
+      if tg then
+        tline = tostring(d.task) .. ("  to %d %d %d"):format(tg.x, tg.y, tg.z)   -- the banner shows the state
+          .. (tonumber(p.replans) and p.replans > 0 and ("  replans " .. p.replans) or "")
+      end
+      put(1, 3, "Task  ", T.dim) put(7, 3, tline:sub(1, math.max(0, w - 7)))
       put(1, 4, "Fuel  ", T.dim)
       if type(d.fuel) == "number" and type(d.fuelLimit) == "number" and d.fuelLimit > 0 then
         local bw = math.max(4, math.min(16, w - 20))
@@ -367,7 +431,13 @@ return {
       term.setBackgroundColor(T.bg)
       term.clear()
       if tv then drawTemplates(w, h)
-      elseif sel and devices[sel] then drawDetail(w, h) else sel = nil drawList(w, h) end
+      elseif sel and devices[sel] then
+        if sel == want then want = nil end
+        drawDetail(w, h)
+      else
+        if sel ~= want then sel = nil end         -- an asked-for drone not heard yet: list until it answers
+        drawList(w, h)
+      end
       term.redirect(parent)
       buf.setVisible(true)
     end
@@ -412,6 +482,10 @@ return {
           local arg, why = parseCalib(calib.input)
           if arg then send("calibrate", arg) calib = nil else msg = why end
         end
+        render()
+      elseif e == "drones_open" then              -- the kernel: show this drone (top bar activity tap)
+        local id = tonumber(a)
+        if id then sel, want, tv, calib, msg = id, id, nil, nil, "" end
         render()
       elseif e == "theme_changed" or e == "term_resize" or e == "peripheral" or e == "peripheral_detach" then
         render()

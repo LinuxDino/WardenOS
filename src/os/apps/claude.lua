@@ -6,7 +6,8 @@ local MAX_STEPS = 25                            -- tool rounds per message, guar
 local MAX_OUT = 6000                            -- characters of tool output sent back to Claude
 
 ---------------------------------------------------------------- tools Claude can use (/os/lib/claudetools.lua)
-local kit = dofile("/os/lib/claudetools.lua").new({ where = "desktop", seq = 0, api = api })
+local tools = dofile("/os/lib/claudetools.lua")
+local kit = tools.new({ where = "desktop", seq = 0, api = api })
 local TOOLS, RISKY, RUN, describe, SYSTEM = kit.TOOLS, kit.RISKY, kit.RUN, kit.describe, kit.system
 
 local function clip(s)
@@ -262,7 +263,21 @@ return {
           lines[#lines + 1] = { l, T.dim }
         end
       end
-      local bottom = h - 2                         -- last transcript row
+      -- drones Claude is using right now (live phase/step from the drones' status), above the status line
+      local dl = {}
+      if not approval then
+        local cache = type(WardenOS.drones) == "table" and WardenOS.drones or nil
+        local okl, l = pcall(tools.lines, cache)
+        if okl and type(l) == "table" then dl = l end
+      end
+      local nd = math.min(#dl, 2, math.max(0, h - 8))
+      local statusY = busy and status ~= "" and h - 1 or nil
+      local bottom = h - 2 - nd                    -- last transcript row
+      if nd > 0 and not statusY then bottom = bottom + 1 end
+      for i = 1, nd do
+        local txt = dl[i].text .. (i == nd and #dl > nd and (" +" .. (#dl - nd)) or "")
+        put(1, bottom + i, txt:sub(1, w), dl[i].running and T.accent or T.dim)
+      end
       local cardH = 0
       if approval then
         local body = wrap(approval.text, w - 2)
@@ -287,7 +302,7 @@ return {
         bx = button(bx, y + cardH - 2, "Always", function() os.queueEvent("claude_decision", "always") end)
         button(bx, y + cardH - 2, "Deny", function() os.queueEvent("claude_decision", "deny") end, T.bg, T.bad)
       end
-      if busy and status ~= "" then put(1, h - 1, status:sub(1, w), T.dim) end
+      if statusY then put(1, h - 1, status:sub(1, w), T.dim) end
       local shown = busy and "(wait...)" or input
       local room = w - 3
       if #shown > room then shown = shown:sub(-room) end
@@ -299,6 +314,7 @@ return {
     end
 
     local function render()
+      pcall(kit.setBusy, busy, approval and "Waiting for your OK" or status)
       local parent = term.current()
       local w, h = parent.getSize()
       local buf = window.create(parent, 1, 1, w, h, false)

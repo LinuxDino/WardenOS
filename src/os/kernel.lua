@@ -9,6 +9,8 @@ if not cfg.themes[settings.theme] then settings.theme = cfg.default end
 
 local T = {}                                   -- live theme, shared with apps
 rawset(_G, "WardenOS", { name = cfg.name, version = cfg.version, theme = T, repo = cfg.repo, branch = cfg.branch })
+-- what Claude is doing (kept by /os/lib/claudetools.lua): shown in the top bar
+WardenOS.claude = { busy = false, status = "", drones = {}, talks = {} }
 
 ---------------------------------------------------------------- display
 -- auto     desktop on the whole monitor (computer screen shows a status panel), else the computer
@@ -292,20 +294,79 @@ local function drawDock()
   end
 end
 
+-- Claude activity for the top bar: { long = "AI>#12 goto", short = "AI>#12", id = drone | nil } or nil.
+-- Shown while Claude is busy or a drone runs a task Claude started (WardenOS.claude + WardenOS.drones).
+local indZone                                   -- { x1, x2, id } of the indicator as last drawn
+local function activity()
+  local A = type(WardenOS.claude) == "table" and WardenOS.claude or {}
+  local D = type(WardenOS.drones) == "table" and WardenOS.drones or {}
+  local now, ids = os.clock(), {}
+  for id, d in pairs(D) do
+    if type(d) == "table" and type(d.by) == "table" and d.by.who == "claude" and d.state == "working"
+       and now - (tonumber(d.seen) or -1e9) < 10 then
+      ids[#ids + 1] = id
+    end
+  end
+  local E = type(A.drones) == "table" and A.drones or {}
+  if #ids == 0 and A.busy then                  -- busy: the drone it just sent a command to, if any
+    local best, at
+    for id, e in pairs(E) do
+      if type(e) == "table" and tonumber(e.at) and now - e.at < 60 and (not at or e.at > at) then best, at = id, e.at end
+    end
+    ids[1] = best
+  end
+  if #ids == 0 and not A.busy then return nil end
+  table.sort(ids)
+  local id = ids[1]
+  if not id then return { long = "AI busy", short = "AI" } end
+  local e, d = E[id], D[id]
+  local act = type(e) == "table" and tostring(e.action or "") or ""
+  if act == "" and type(d) == "table" then act = "task " .. tostring(d.task or "") end
+  local word = act:match("^task%s+(.+)$") or act:match("^(%S+)") or ""
+  local more = #ids > 1 and (" +" .. (#ids - 1)) or ""
+  return { long = ("AI>#%d %s%s"):format(id, word, more), short = "AI>#" .. id, id = id }
+end
+local lastAct = ""
+
 local function drawTop()
   fill(out, 1, 1, W, 1, T.panel)
   text(out, 2, 1, cfg.name:upper(), menuOpen and T.warn or T.accent, T.panel)
   local t = topWin()
   local mid = appView and "Apps" or (t and t.title)
   local c = user.name .. "  " .. clockStr() .. " "
-  if mid then
-    local room = W - #cfg.name - #c - 6
-    if room >= 4 then
-      mid = mid:sub(1, room)
-      text(out, math.max(#cfg.name + 4, math.floor((W - #mid) / 2) + 1), 1, mid, T.text, T.panel)
+  local left = #cfg.name + 3                    -- first column after the name and a gap
+  local okA, act = pcall(activity)
+  act = okA and act or nil
+  lastAct = act and act.long or ""
+  indZone = nil
+  local ix                                      -- indicator start column
+  if act then
+    -- room between the name and the clock: drop the user name, then shorten the indicator
+    local function room() return W - #c - left end
+    if room() < #act.long + 1 then c = clockStr() .. " " end
+    if room() < 2 then c = "" end
+    local s = act.long
+    if room() < #s + 1 then s = act.short end
+    if room() < #s + 1 then s = s:sub(1, math.max(0, room() - 1)) end
+    if #s > 0 then
+      ix = W - #c - #s
+      local pulse = math.floor(os.clock()) % 2 == 0
+      text(out, ix, 1, s, T.bg, pulse and T.accent or T.warn)
+      indZone = { ix, ix + #s - 1, act.id }
     end
   end
-  if #c + #cfg.name + 3 <= W then text(out, W - #c + 1, 1, c, T.dim, T.panel) end
+  if mid then
+    local right = (ix and ix - 2 or W - #c)     -- last column the title may use
+    local room = right - left - 1
+    if not ix then room = W - #cfg.name - #c - 6 end
+    if room >= 4 then
+      mid = mid:sub(1, room)
+      local x = math.max(#cfg.name + 4, math.floor((W - #mid) / 2) + 1)
+      if x + #mid - 1 > right then x = math.max(left + 1, right - #mid + 1) end
+      text(out, x, 1, mid, T.text, T.panel)
+    end
+  end
+  if #c > 0 and #c + #cfg.name + 3 <= W then text(out, W - #c + 1, 1, c, T.dim, T.panel) end
 end
 
 local function drawMenu()
@@ -515,7 +576,11 @@ local function onTouch(x, y)
   end
 
   if y == 1 then
-    if x <= #cfg.name + 2 then menuOpen = true end
+    if x <= #cfg.name + 2 then menuOpen = true
+    elseif indZone and x >= indZone[1] and x <= indZone[2] then   -- Claude activity: show that drone
+      if indZone[3] then os.queueEvent("os_launch", "drones", indZone[3])
+      else os.queueEvent("os_launch", "claude") end
+    end
     return
   end
 
@@ -631,7 +696,18 @@ while running do
     end
 
   elseif name == "os_launch" then
-    spawn(ev[2], ev[3])
+    -- an app with openEvent that already runs gets the argument as an event instead of a second copy
+    local app, mine = apps[ev[2]], nil
+    if app and app.openEvent and not app.multi then
+      for i = #wins, 1, -1 do if wins[i].app == ev[2] then mine = wins[i] break end end
+    end
+    if mine then
+      menuOpen, appView = false, false
+      focus(mine)
+      if ev[3] ~= nil then send(mine, { app.openEvent, ev[3], n = 2 }) end
+    else
+      spawn(ev[2], ev[3])
+    end
     redraw = true
 
   elseif name == "os_settings" then                      -- the Settings app saved something
@@ -647,6 +723,10 @@ while running do
   elseif name == "rednet_message" and ev[4] == PROTO then  -- answer pings, apps get every message
     if type(ev[3]) == "table" and ev[3].t == "ping" then rednet.send(ev[2], netStatus(), PROTO) end
     broadcast(ev)
+    if type(ev[3]) == "table" and ev[3].t == "status" then  -- a drone's task (Claude's?) started or ended
+      local okA, a = pcall(activity)
+      if okA and ((a and a.long) or "") ~= lastAct then redraw = true end
+    end
 
   elseif name == "peripheral" then                         -- a modem attached later
     openModems()

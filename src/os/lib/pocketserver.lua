@@ -10,7 +10,9 @@
 --                   pocket_claude {op = send (text) | decision (choice) | new | poll}
 -- Server -> pocket: pocket_paired {ok}, pocket_unpaired, pocket_drones {drones}, pocket_ack {seq, cmd, ok, info},
 --                   pocket_templates {templates = { {name, description, author, code}, ... }},
---                   pocket_claude {log, busy, status, approval, error}, pocket_error {info, req, seq}
+--                   pocket_claude {log, busy, status, approval, error, drones = { {id, action, phase, step, total,
+--                   text}, ... } (the drones Claude is using now)}, pocket_error {info, req, seq}
+-- pocket_drones entries carry by ({id, who = "claude" | "player"} while a task runs), progress, taskTime.
 local PROTO = "wardenos"
 local PAIRED = "/os/pockets"
 local ONLINE = 10                               -- seconds since the last status: drone is online
@@ -71,6 +73,7 @@ local function droneList()
       fuel = d.fuel, fuelLimit = d.fuelLimit, nav = d.nav, homeSet = d.homeSet, pos = d.pos,
       log = log, lastTask = d.lastTask, online = (now - (d.seen or -1e9)) < ONLINE,
       abs = d.abs, calibrated = d.calibrated, fuelItems = d.fuelItems, safeDig = d.safeDig,
+      by = d.by, progress = d.progress, taskTime = d.taskTime,
     }
   end
   table.sort(out, function(a, b) return a.id < b.id end)
@@ -89,9 +92,24 @@ local function getChat()
   return chat
 end
 
+-- the drones Claude is using now (short list for the pocket's Claude screen)
+local function claudeDrones()
+  if not core or type(core.tools) ~= "table" then return {} end
+  local ok, l = pcall(core.tools.lines, cache())
+  if not ok or type(l) ~= "table" then return {} end
+  local out = {}
+  for i, e in ipairs(l) do
+    if i > 4 then break end
+    out[i] = { id = e.id, action = tostring(e.action):sub(1, 40), phase = e.phase, step = e.step, total = e.total,
+               text = tostring(e.text):sub(1, 60) }
+  end
+  return out
+end
+
 local function chatState(err)
   local s = chat and chat.snapshot(30) or { log = {}, busy = false, status = "" }
   s.t = "pocket_claude"
+  s.drones = claudeDrones()
   if not err and not (core and core.api.getKey()) then err = NO_KEY end
   s.error = err
   return s

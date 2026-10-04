@@ -744,6 +744,156 @@ def options_all():
     return pr
 
 
+# ---------------------------------------------------------------- what Claude does with drones (activity)
+def exec_host(env):
+    def h(code):
+        env.rt.execute(code)
+        return ["claude_noop"]
+    return h
+
+
+RUNNING_12 = """
+local d = WardenOS.drones[12]
+d.task, d.state, d.seen = "build", "working", os.clock()
+d.by = { id = 7, who = "claude" }
+d.taskTime = 34
+d.progress = { phase = "moving", step = 5, total = 20, target = { x = 1, y = 2, z = 3 }, replans = 1 }
+"""
+DONE_12 = """
+local d = WardenOS.drones[12]
+d.task, d.state, d.by, d.progress, d.taskTime = "manual", "ready", nil, nil, nil
+d.lastTask = { name = "build", ok = true, info = "", by = { id = 7, who = "claude" } }
+d.seen = os.clock() + 5
+"""
+
+
+def activity():
+    probe = {}
+    env = Env(typed("build") + [["host", "click", " Allow "], ["host", "ack"], ["host", "grab"],
+                                ["host", "exec", RUNNING_12], ["host", "snap", "running"],
+                                ["host", "exec", DONE_12], ["host", "snap", "done"]],
+              [reply([tool_use("b1", "drone_task", {"name": "build", "code": "return 1"})], "tool_use"),
+               reply([text("Started.")])],
+              modem=True, prelude='rednet.open("back")\n' + GIVE_12 + SEED_MAP)
+
+    def grab(_=None):          # the shared activity table right after the ack
+        a = env.rt.eval("WardenOS.claude")
+        e = a.drones[12] if a and a.drones else None
+        probe["entry"] = (e.action, e.task, e.pending, e.since) if e else None
+        return ["claude_noop"]
+    env.hosts["ack"], env.hosts["exec"], env.hosts["grab"] = last_cmd_ack(env), exec_host(env), grab
+    env.run()
+    pr = env.problems
+    cmds = [x for x in env.sent() if x.msg.t == "cmd"]
+    expect(pr, len(cmds) == 1 and cmds[0].msg.by == "claude", "by not sent: %r" % [dict(c.msg.items()) for c in cmds])
+    expect(pr, probe.get("entry") and probe["entry"][0] == "task build" and probe["entry"][1] is True
+           and not probe["entry"][2] and probe["entry"][3] == 123456, "activity entry %r" % (probe.get("entry"),))
+    run = env.snaps.get("running", "")
+    expect(pr, "#12 task build - moving 5/20 34s" in run, "drone line not shown:\n" + run)
+    done = env.snaps.get("done", "")
+    expect(pr, "#12 task build" not in done, "drone line stays after the task:\n" + done)
+    a = env.rt.eval("WardenOS.claude")
+    expect(pr, a.drones[12] is None and a.busy is False, "entry not cleared / still busy")
+    return pr
+
+
+LINES_LUA = """function()
+  local K = dofile("/os/lib/claudetools.lua")
+  local A = K.activity()
+  A.drones[3] = { action = "goto 1 2 3", at = os.clock(), task = true }
+  local cache = { [3] = { by = { who = "claude" }, state = "working", seen = os.clock(),
+                          progress = { phase = "digging", step = 2, total = 9 } },
+                  [4] = { by = { who = "claude" }, state = "working", task = "x", seen = os.clock() },
+                  [5] = { by = { who = "player" }, state = "working", seen = os.clock() } }
+  local out = {}
+  for i, e in ipairs(K.lines(cache)) do out[i] = e.text end
+  return table.concat(out, "|")
+end"""
+
+
+def activity_fail_lines():
+    # a failed command leaves no entry; lines() = Claude's entries + drones running Claude's tasks
+    env = Env(typed("go") + [["host", "click", " Allow "], ["host", "ack_fail"]],
+              [reply([tool_use("g1", "drone_command", {"command": "forward"})], "tool_use"),
+               reply([text("ok")])],
+              modem=True, prelude='rednet.open("back")\n' + GIVE_12)
+    env.hosts["ack_fail"] = last_cmd_ack(env, ok=False, info="busy: x")
+    env.run()
+    pr = env.problems
+    a = env.rt.eval("WardenOS.claude")
+    expect(pr, a.drones[12] is None, "failed command left an entry")
+    t = env.rt.eval(LINES_LUA)()
+    expect(pr, t == "#3 goto 1 2 3 - digging 2/9|#4 task x", "lines %r" % t)
+    return pr
+
+
+ZOOM_STUB = """
+local M = { LEGEND = { { "?", "unknown" } } }
+function M.view(x1, z1, x2, z2, y, marks)      -- an old map.lua: no zoom argument
+  local rows = {}
+  for z = z1, math.min(z2, z1 + 39) do rows[#rows + 1] = string.rep(":", math.min(x2, x1 + 59) - x1 + 1) end
+  return rows, "? unknown", { x1 = x1, z1 = z1, x2 = math.min(x2, x1 + 59), z2 = math.min(z2, z1 + 39) }
+end
+function M.surface() return 64 end
+function M.protected() return { rev = 0, boxes = {} } end
+function M.box() return {} end
+function M.count() return 0 end
+return M
+"""
+WRAP_VIEW = """
+ZOOMS = {}
+local real = dofile
+dofile = function(p)
+  local m = real(p)
+  if p == "/os/lib/map.lua" and type(m) == "table" and not m._wrapped then
+    local v = m.view
+    m.view = function(...) local a = table.pack(...) ZOOMS[#ZOOMS + 1] = a[7] or 0 return v(...) end
+    m._wrapped = true
+  end
+  return m
+end
+"""
+
+
+def map_zoom():
+    env = Env(typed("look"),
+              [reply([tool_use("z1", "map_view", {"x1": 0, "z1": 0, "x2": 199, "z2": 99, "zoom": 4}),
+                      tool_use("z2", "map_view", {"x1": 0, "z1": 0, "x2": 9, "z2": 9})], "tool_use"),
+               reply([text("ok")])],
+              modem=True, prelude=WRAP_VIEW + 'rednet.open("back")\n' + GIVE_12 + SEED_MAP).run()
+    pr, b = env.problems, env.bodies
+    tools = {t["name"]: t for t in b[0]["tools"]} if b else {}
+    z = tools.get("map_view", {}).get("input_schema", {}).get("properties", {}).get("zoom")
+    expect(pr, z and z.get("type") == "integer" and z.get("enum") == [1, 2, 4, 8, 16]
+           and "zoom" in tools["map_view"]["description"], "zoom schema %r" % z)
+    zs = env.rt.globals().ZOOMS
+    expect(pr, zs and [zs[i] for i in range(1, len(zs) + 1)] == [4, 1], "map.view zoom args %r"
+           % ([zs[i] for i in range(1, len(zs) + 1)] if zs else None))
+    if len(b) == 2:
+        v1, v2 = [x["content"] for x in results(b, 1)]
+        expect(pr, "4 x 4 blocks" in v1 and "x 0..199" in v1 and "z=4 " in v1 and "z=96" in v1,
+               "zoomed view %s" % v1[:600])
+        expect(pr, "x 4 blocks" not in v2 and "z=1 " in v2, "zoom 1 view %s" % v2[:300])
+    else:
+        pr.append("%d requests" % len(b))
+    # an old map.lua without zoom: the result is still labelled right (1 block per character)
+    env2 = Env(typed("look"),
+               [reply([tool_use("z1", "map_view", {"x1": 0, "z1": 0, "x2": 199, "z2": 99, "zoom": 4})], "tool_use"),
+                reply([text("ok")])],
+               modem=True, files={"/os/lib/map.lua": ZOOM_STUB},
+               prelude='rednet.open("back")\n' + GIVE_12
+               + 'WardenOS.drones = { [12] = { kind = "turtle", owner = 7, seen = os.clock() } }').run()
+    b2 = env2.bodies
+    pr += env2.problems
+    if len(b2) == 2:
+        v = results(b2, 1)[0]["content"]
+        expect(pr, "x 4 blocks" not in v and "x 0..59" in v and "z=1 " in v and "cut to 60 x 40" in v,
+               "old map %s" % v[:400])
+    else:
+        pr.append("old map: %d requests" % len(b2))
+    return pr
+
+
 SCENARIOS = [("a plain chat + exact history echo", plain_chat), ("b tool loop, Allow button", tool_allow),
                  ("b2 Always button", tool_always), ("c Deny button", tool_deny), ("d parallel tool calls", parallel_tools),
                  ("e1 500/503 retries then 200", retries), ("e2 retries exhausted -> rollback", retries_exhausted),
@@ -761,7 +911,10 @@ SCENARIOS = [("a plain chat + exact history echo", plain_chat), ("b tool loop, A
                  ("k4 templates: save, list, run", templates),
                  ("k5 goto sends the map first; protect command refused", goto_mapdata),
                  ("k6 drone_status: abs, home, coal, safe dig", status_fields),
-                 ("k7 options: all my drones", options_all)]
+                 ("k7 options: all my drones", options_all),
+                 ("l1 activity: by=claude, live drone line, cleared when done", activity),
+                 ("l2 activity: failed command, lines", activity_fail_lines),
+                 ("l3 map_view zoom (+ an old map.lua)", map_zoom)]
 for name, fn in SCENARIOS:
     scenario(name, fn)
 
