@@ -232,7 +232,8 @@ local function droneCall(id, cmd, arg)
   while true do
     local e, a, b, c = os.pullEvent()
     if e == "timer" and a == timer then return "no answer from drone #" .. id .. " (out of range or offline?)", true end
-    if e == "rednet_message" and a == id and c == PROTO and type(b) == "table" and b.t == "ack" and b.seq == mine then
+    if e == "rednet_message" and a == id and c == PROTO and type(b) == "table" and b.t == "ack" and b.seq == mine
+       and b.cmd == cmd then                      -- the Drones app numbers its commands from 1 too
       return (b.ok and "ok" or "failed") .. (b.info and (": " .. tostring(b.info)) or ""), not b.ok
     end
   end
@@ -318,7 +319,8 @@ local function describe(name, input)             -- short text for the approval 
   if name == "drone_command" then
     return ("drone %s: %s %s"):format(input.id ~= nil and input.id ~= json.null and ("#" .. tostring(input.id)) or "",
                                       tostring(input.command),
-                                      input.arg ~= nil and input.arg ~= json.null and tostring(input.arg) or "")
+                                      input.arg ~= nil and input.arg ~= json.null
+                                        and (type(input.arg) == "table" and json.encode(input.arg) or tostring(input.arg)) or "")
   end
   if name == "drone_task" then
     return ("task %q on drone %s:\n%s"):format(tostring(input.name), input.id ~= nil and input.id ~= json.null
@@ -407,6 +409,8 @@ return {
             add("error", "That reply was cut off mid-action; nothing was run. Try again.")
             return
           end
+          -- an empty reply can't stay in the history (the API rejects empty assistant messages)
+          if #content == 0 then content = json.array({ { type = "text", text = "(no reply)" } }) end
           msgs[#msgs + 1] = { role = "assistant", content = content }
           return
         end
@@ -420,7 +424,14 @@ return {
             text, isErr = "unknown tool " .. name, true
           else
             local allowed = true
-            if RISKY[name] and not cfg.auto and not allowAlways[name] then
+            local early                          -- refused before asking: no point approving it
+            if name == "drone_command" or name == "drone_task" then
+              local id, why = pickDrone(inp)
+              if not id then early = why end
+            end
+            if early then
+              allowed = false
+            elseif RISKY[name] and not cfg.auto and not allowAlways[name] then
               approval = { name = name, text = describe(name, inp) }
               status = "Waiting for your OK"
               os.queueEvent("claude_redraw")
@@ -435,6 +446,8 @@ return {
               os.queueEvent("claude_redraw")
               local ok, a, b = pcall(RUN[name], inp)
               if ok then text, isErr = a, b else text, isErr = "tool crashed: " .. tostring(a), true end
+            elseif early then
+              text, isErr = early, true
             else
               add("info", "denied: " .. name)
               text, isErr = "The player denied this action.", true
@@ -455,7 +468,7 @@ return {
       busy = true
       worker = coroutine.create(function()
         local ok, err = pcall(turn)
-        if not ok then add("error", "crashed: " .. tostring(err)) end
+        if not ok then add("error", "crashed: " .. tostring(err)) rollback() end   -- keep the history valid
         busy, status, approval = false, "", nil
       end)
       workerFilter = nil
