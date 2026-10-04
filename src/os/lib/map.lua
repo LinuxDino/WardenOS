@@ -14,6 +14,8 @@
 --   map.find(pattern, near, limit)
 --                                 { {x, y, z, name, d}, ... } blocks whose name contains pattern (plain text,
 --                                 any case), nearest to near = {x, y, z} first; limit default 20, max 100
+--   map.box(x1, y1, z1, x2, y2, z2, limit)
+--                                 { {x, y, z, name}, ... } known blocks in that box, solid first, then air
 --   map.info()                    { total, cap, full, chunks, bounds = {x1,y1,z1,x2,y2,z2} | nil,
 --                                   counts = { [char] = n }, protect = {rev, boxes} }
 --   map.category(name)            the map char of a block name
@@ -398,6 +400,35 @@ function M.find(pattern, near, limit)
     end
   end
   return out
+end
+
+-- known blocks inside a box (inclusive): solid ones first, then air, at most limit (default 5000)
+function M.box(x1, y1, z1, x2, y2, z2, limit)
+  limit = math.floor(tonumber(limit) or 5000)
+  x1, x2 = math.min(x1, x2), math.max(x1, x2)
+  y1, y2 = math.max(YMIN, math.min(y1, y2)), math.min(YMAX, math.max(y1, y2))
+  z1, z2 = math.min(z1, z2), math.max(z1, z2)
+  local solid, air = {}, {}
+  for cx = math.floor(x1 / 16), math.floor(x2 / 16) do
+    for cz = math.floor(z1 / 16), math.floor(z2 / 16) do
+      local c = chunk(cx, cz, false)
+      if c then
+        for p, name in pairs(c.b) do
+          local lx, y, lz = unpackPos(p)
+          local x, z = cx * 16 + lx, cz * 16 + lz
+          if x >= x1 and x <= x2 and y >= y1 and y <= y2 and z >= z1 and z <= z2 then
+            local l = name == "air" and air or solid
+            if #l < limit then l[#l + 1] = { x, y, z, name } end
+          end
+        end
+      end
+    end
+  end
+  for _, o in ipairs(air) do
+    if #solid >= limit then break end
+    solid[#solid + 1] = o
+  end
+  return solid
 end
 
 function M.info()

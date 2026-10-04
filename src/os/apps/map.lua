@@ -123,7 +123,7 @@ return {
       term.clearLine()
       put(2, 1, "Map", T.accent, T.panel)
       local mode = layer and ("y=" .. layer) or "surface"
-      local right = w - (layer and 14 or 6) + 1
+      local right = w - (layer and 14 or 7) + 1     -- " - " " + " " Surf " or " Layer "
       put(6, 1, (mode .. "  " .. cx .. "," .. cz):sub(1, math.max(0, right - 7)), T.dim, T.panel)
       local x = right
       if layer then
