@@ -24,9 +24,11 @@ An Advanced Monitor is optional (at least 3x2 blocks recommended).
 From Pastebin ([pastebin.com/CeQfPV78](https://pastebin.com/CeQfPV78)), on a computer or a turtle:
 
 ```
-pastebin get CeQfPV78 install
-install
+pastebin run CeQfPV78
 ```
+
+(or `pastebin get CeQfPV78 install` and then `install`; if that says "File already exists", delete the old
+file with `delete install` first, or just use `pastebin run`)
 
 Or straight from GitHub:
 
@@ -78,6 +80,19 @@ is kept as `startup.old.lua`). On first start it asks how to work:
 The home screen has **Drones** (status, Go home, Stop, Set home, driving, all home), **Claude**, **Terminal**
 (type `exit` to come back) and **Settings** (mode, pick/forget the computer, theme, update, exit to CraftOS).
 Paired pockets are listed in `/os/pockets` on the computer. Rednet range is the modem's range (ender modems: unlimited).
+
+## GPS (optional, recommended for drones)
+
+Drones work without GPS, but with it they find their world position by themselves (Drones > Use GPS).
+
+1. Build 4 computers with wireless (or ender) modems high up, e.g. around y = 200. They must not all be in one
+   flat plane: put A, B 5 blocks east of A, C 5 blocks south of A, and D 5 blocks above A.
+2. Look at each computer, press F3 and read "Targeted Block: x, y, z".
+3. On each one: `edit startup.lua`, write `shell.run("gps", "host", X, Y, Z)` with that computer's own
+   coordinates, save, reboot. Give each a label (`label set gps1`) so it keeps its program when broken.
+4. They must stay loaded (near your base, or with a chunk loader). Test anywhere with `gps locate`.
+
+Don't install WardenOS on the GPS computers; they only run `gps host`.
 
 ## Update
 
