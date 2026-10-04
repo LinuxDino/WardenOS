@@ -11,7 +11,11 @@ built for modded Minecraft worlds.
 - **Drones**: see every turtle and WardenOS computer on the network, live turtle status (task, fuel, position,
   inventory, activity log), remote control, homes and one-tap "call back"
 - **Peripheral Inspector**: browse every attached or networked peripheral from any mod and see its methods
-- **Lua Console**, **Terminal** (full CraftOS shell), **Files**, **Editor**, **System Monitor**
+- **Map**: the world as your drones have seen it, zoom from 1 to 16 blocks per character, protected areas
+- **Dashboard**: live cards for energy, fluids, inventories, Create stress/speed, AE2 / Refined Storage (via Advanced
+  Peripherals), redstone, any peripheral method, plus drone and map stats
+- **System Monitor**: overview plus debug pages: network traffic, all drones, Claude API calls, error log, disk
+- **Lua Console**, **Terminal** (full CraftOS shell, with `btop` and `neofetch`), **Files**, **Editor**
 - Dark and light theme, login with salted + hashed passwords
 - 2 second boot menu: WardenOS or plain CraftOS
 - One-command install and in-place updates straight from this repository
@@ -53,7 +57,16 @@ locate (needs GPS) or **Update** it to the newest agent from GitHub.
   (no GPS needed), so **Go home** drives it back, and **all home** in the list calls every drone you own back.
 - Drones can run **tasks**: small Lua programs that run on the turtle by themselves; their `print`/`report` lines
   show up live under Activity. **Stop** cancels a task.
-- **Give to Claude** lets the Claude app control that drone (only the drones you give it).
+- **Give to Claude** lets the Claude app control that drone (only the drones you give it), or switch
+  Claude > options to **all my drones**.
+- **Calibrate** (type the F3 position and facing) or **Use GPS** gives a drone world coordinates; then it reports
+  what it sees to the **Map**, plans its own routes in 3D (`goto`) and respects protected areas.
+- **Safe dig** (on by default): drones only dig natural blocks (stone, dirt, sand, gravel, ores, leaves), never
+  planks, glass, bricks and the like. Mark your base in **Map > Protect** and nothing inside it is dug at all.
+- Drones refuel from coal by themselves and drive home when fuel gets too low for the way back.
+- **templates** (Drones list): programs Claude saved; tap one, pick a drone, run.
+- When Claude is working with a drone, the top bar shows **AI>#12 ...**; tap it to open that drone. The Drones app
+  shows Claude's job, phase, step and time.
 
 ## Claude
 
@@ -109,6 +122,11 @@ To install from another branch: `install <branch>` or `install update <branch>`.
 - **WARDENOS** (top left): Apps, Settings, log out, exit to CraftOS, reboot, shut down.
 - With the desktop on the monitor, the keyboard still types into the active window.
 - `F12` exits to CraftOS. In the boot menu: arrows + Enter, `D` saves the default.
+
+## Terminal commands
+
+- `neofetch`: system info with the WardenOS logo.
+- `btop`: live stats (disk, events, rednet traffic, Claude calls, drones with fuel and tasks). `q` quits.
 
 ## Display modes (Settings > Display)
 

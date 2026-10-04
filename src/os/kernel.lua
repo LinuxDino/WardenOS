@@ -467,6 +467,10 @@ local function send(p, ev)
     if tostring(res):find("Terminated") then
       p.done = true
     else
+      pcall(function()                           -- System Monitor > Logs
+        local L = rawget(_G, "WardenLog")
+        if L then L.add("error", { source = tostring(p.title), text = tostring(res) }) end
+      end)
       term.setTextColor(colors.red)
       term.setBackgroundColor(colors.black)
       print()

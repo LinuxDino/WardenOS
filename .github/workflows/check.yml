@@ -12,3 +12,7 @@ jobs:
       - run: python3 tests/check.py
       - run: python3 tests/test_drone_tasks.py
       - run: python3 tests/test_claude.py
+      - run: python3 tests/test_pocket.py
+      - run: python3 tests/test_map.py
+      - run: python3 tests/test_dashboard.py
+      - run: python3 tests/test_bin.py

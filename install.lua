@@ -158,7 +158,7 @@ if isTurtle then
       for _, p in ipairs({ "/os/users.dat", "/os/settings.lua", "/os/boot.cfg", "/os/files.dat" }) do
         if fs.exists(p) then fs.delete(p) end
       end
-      for _, d in ipairs({ "/os/apps", "/os/lib", "/os/pocket" }) do
+      for _, d in ipairs({ "/os/apps", "/os/lib", "/os/pocket", "/os/bin" }) do
         if fs.isDir(d) and #fs.list(d) == 0 then fs.delete(d) end
       end
     elseif fs.exists("/startup.lua") and not fs.exists("/os/drone/agent.lua") and not fs.exists("/startup.old.lua") then
@@ -216,7 +216,7 @@ if isPocket then
       for _, p in ipairs({ "/os/users.dat", "/os/settings.lua", "/os/boot.cfg", "/os/files.dat" }) do
         if fs.exists(p) then fs.delete(p) end
       end
-      for _, d in ipairs({ "/os/apps", "/os/lib", "/os/drone" }) do
+      for _, d in ipairs({ "/os/apps", "/os/lib", "/os/drone", "/os/bin" }) do
         if fs.isDir(d) and #fs.list(d) == 0 then fs.delete(d) end
       end
     elseif fs.exists("/startup.lua") and not fs.exists("/os/pocket/main.lua") and not fs.exists("/startup.old.lua") then
