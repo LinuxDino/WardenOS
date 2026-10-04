@@ -11,6 +11,9 @@ return {
     local zones, msg = {}, ""
     local seq, pending = 0, {}
     local calib                                   -- calibrate form: { input = "x y z facing" } while open
+    local tv                                      -- templates view: { slug = shown template | nil, drone = preselected,
+                                                  --                   scroll, del = asked to delete }
+    local tplLib = fs.exists("/os/lib/templates.lua") and dofile("/os/lib/templates.lua")
     local FACES = { [0] = "N", "E", "S", "W" }
     local FACE_IN = { n = 0, north = 0, e = 1, east = 1, s = 2, south = 2, w = 3, west = 3,
                       ["0"] = 0, ["1"] = 1, ["2"] = 2, ["3"] = 3 }
@@ -146,8 +149,9 @@ return {
           end
           msg = n > 0 and ("Updating " .. n .. " drone(s) from GitHub") or "No drones of yours online"
         end },
+        { "templates", function() tv, msg = { scroll = 0 }, "" end },
       })
-      if msg ~= "" then put(25, h, msg:sub(1, w - 25), T.warn) end
+      if msg ~= "" then put(2, 2, msg:sub(1, w - 2), T.warn) end   -- row 2 is free: the list starts at row 3
     end
 
     ------------------------------------------------ detail view
@@ -255,6 +259,7 @@ return {
             calib, msg = { input = pre }, ""
           end },
           { "Scan", function() send("scan") end },
+          { "Templates", function() tv, msg = { scroll = 0, drone = sel }, "" end, fg = T.accent },
           { d.safeDig == false and "Safe dig: off" or "Safe dig: on", function() send("safedig", d.safeDig == false) end,
             fg = d.safeDig == false and T.warn or T.text },
         })
@@ -268,6 +273,90 @@ return {
       end
     end
 
+    ------------------------------------------------ templates (saved drone programs)
+    local function wrapText(text, width, maxLines)
+      local out, line = {}, ""
+      for word in tostring(text):gmatch("%S+") do
+        if line == "" then line = word:sub(1, width)
+        elseif #line + 1 + #word <= width then line = line .. " " .. word
+        else out[#out + 1] = line line = word:sub(1, width) end
+        if #out >= maxLines then return out end
+      end
+      if line ~= "" and #out < maxLines then out[#out + 1] = line end
+      return out
+    end
+
+    local function drawTemplates(w, h)
+      term.setCursorPos(1, 1)
+      term.setBackgroundColor(T.panel)
+      term.clearLine()
+      put(1, 1, " < ", T.accent, T.panel)
+      local t = tv.slug and tplLib and tplLib.get(tv.slug)
+      if tv.slug and not t then tv.slug = nil end
+      if not t then
+        zone(1, 1, 3, function() tv, msg = nil, "" end)
+        local all = tplLib and tplLib.list() or {}
+        put(4, 1, ("Templates (%d)%s"):format(#all, tv.drone and (" for #" .. tv.drone) or ""):sub(1, w - 4), T.text, T.panel)
+        if #all == 0 then
+          put(2, 3, "No templates yet.", T.dim)
+          for i, l in ipairs(wrapText("Ask Claude to save a drone program as a template; then run it here with one tap.", w - 2, 3)) do
+            put(2, 4 + i, l, T.dim)
+          end
+        end
+        local rows = h - 3
+        if msg ~= "" then put(1, h, msg:sub(1, w), T.warn) end
+        tv.scroll = math.max(0, math.min(tv.scroll or 0, #all - rows))
+        for i = 1, rows do
+          local e = all[tv.scroll + i]
+          if not e then break end
+          local y = 2 + i
+          local tag = e.author == "claude" and "AI " or "   "
+          put(1, y, tag, T.accent)
+          put(4, y, e.name:sub(1, 20), T.text)
+          if w > 26 then put(26, y, e.description:sub(1, w - 26), T.dim) end
+          zone(1, y, w, function() tv.slug, tv.del = e.slug, nil end)
+        end
+        return
+      end
+      zone(1, 1, 3, function() tv.slug, tv.del = nil, nil end)
+      put(4, 1, t.name:sub(1, w - 4), T.text, T.panel)
+      put(1, 3, t.author == "claude" and "by Claude" or "by you", t.author == "claude" and T.accent or T.dim)
+      local y = 4
+      for _, l in ipairs(wrapText(t.description, w, 2)) do put(1, y, l, T.text) y = y + 1 end
+      y = y + 1
+      local lines = 0
+      for line in (t.code .. "\n"):gmatch("(.-)\n") do
+        if lines >= 4 or y > h - 4 then break end
+        put(1, y, line:sub(1, w), T.dim)
+        y, lines = y + 1, lines + 1
+      end
+      y = y + 1
+      local items = {}
+      local targets = {}
+      if tv.drone then
+        targets[1] = tv.drone
+      else
+        for _, d in ipairs(list()) do
+          if d.kind == "turtle" and d.owner == me and online(d) then targets[#targets + 1] = d.id end
+        end
+      end
+      for _, id in ipairs(targets) do
+        items[#items + 1] = { "Run on #" .. id, function() sendTo(id, "run", { name = t.name:sub(1, 32), code = t.code }) end,
+                              bg = T.accent, fg = T.bg }
+      end
+      items[#items + 1] = { tv.del and "Sure? delete" or "Delete", function()
+        if tv.del then
+          tplLib.delete(t.slug)
+          tv.slug, tv.del, msg = nil, nil, "deleted " .. t.name
+        else
+          tv.del = true
+        end
+      end, fg = T.bad }
+      y = buttons(math.min(y, h - 1), w, items)
+      if #targets == 0 and y <= h then put(1, y, "No drone of yours online", T.dim) y = y + 1 end
+      if msg ~= "" and y <= h then put(1, y, msg:sub(1, w), T.warn) end
+    end
+
     ------------------------------------------------ render + loop
     local function render()
       local parent = term.current()
@@ -277,7 +366,8 @@ return {
       zones = {}
       term.setBackgroundColor(T.bg)
       term.clear()
-      if sel and devices[sel] then drawDetail(w, h) else sel = nil drawList(w, h) end
+      if tv then drawTemplates(w, h)
+      elseif sel and devices[sel] then drawDetail(w, h) else sel = nil drawList(w, h) end
       term.redirect(parent)
       buf.setVisible(true)
     end
@@ -311,7 +401,7 @@ return {
         end
         render()
       elseif e == "mouse_scroll" then
-        scroll = scroll + a
+        if tv then tv.scroll = (tv.scroll or 0) + a else scroll = scroll + a end
         render()
       elseif (e == "char" or e == "paste") and calib then
         calib.input = (calib.input .. a):sub(1, 40)

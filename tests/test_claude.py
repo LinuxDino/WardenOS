@@ -15,7 +15,8 @@ CW, CH = 48, 18
 ENTER = 28
 TOOL_NAMES = {"run_lua", "list_files", "read_file", "write_file", "list_peripherals", "call_peripheral",
               "network_scan", "drone_command", "drone_task", "drone_status", "drone_scan",
-              "map_view", "map_find", "map_info", "protect_area"}
+              "map_view", "map_find", "map_info", "protect_area", "drone_send_map",
+              "template_save", "template_list", "template_run"}
 BODY_KEYS = {"model", "max_tokens", "system", "tools", "messages", "output_config", "fallbacks", "cache_control"}
 
 failed = []
@@ -71,7 +72,7 @@ class Env:
         g.HOST_EVENT = self.host_event
         self.M = self.rt.execute(read("tests/mock_cc.lua"))
         for p in ("os/apps/claude.lua", "os/lib/claude.lua", "os/lib/claudetools.lua", "os/lib/json.lua",
-                  "os/lib/map.lua"):
+                  "os/lib/map.lua", "os/lib/templates.lua"):
             self.M.FS["/" + p] = read("src/" + p)
         for d in ("/os", "/os/apps", "/os/lib"):
             self.M.FS[d] = True
@@ -546,6 +547,203 @@ def send_error():
     expect(pr, "crashed" not in env.written, "app crashed")
     return pr
 
+# ---------------------------------------------------------------- world map, all drones, templates, goto
+SEED_MAP = '''
+local map = dofile("/os/lib/map.lua")
+local obs = {}
+for x = 0, 9 do for z = 0, 9 do obs[#obs + 1] = { x, 64, z, x == 5 and "minecraft:water" or "minecraft:grass_block" } end end
+obs[#obs + 1] = { 3, 40, 3, "minecraft:diamond_ore" }
+obs[#obs + 1] = { 4, 65, 4, "air" }
+map.add(obs)
+WardenOS.drones = {
+  [12] = { kind = "turtle", owner = 7, label = "digger", calibrated = true, abs = { x = 2, y = 65, z = 2, f = 1 },
+           origin = { x = 0, y = 65, z = 0, f = 0 }, fuel = 900, fuelItems = 16, task = "manual", state = "ready",
+           seen = os.clock() },
+  [15] = { kind = "turtle", owner = 7, label = "spare", calibrated = false, seen = os.clock() },
+  [16] = { kind = "turtle", owner = 99, label = "neighbour", seen = os.clock() },
+}
+'''
+ALL_DRONES = '''
+fs.makeDir("/os/claude")
+local f = fs.open("/os/claude/config", "w") f.write(textutils.serialize({ allDrones = true })) f.close()
+'''
+
+
+def last_cmd_ack(env, frm=None, ok=True, info="started"):
+    def h(_=None):
+        m = [x for x in env.sent() if x.msg.t == "cmd"][-1]
+        return ["rednet_message", frm or m.to, {"t": "ack", "seq": m.msg.seq, "cmd": m.msg.cmd, "ok": ok, "info": info},
+                "wardenos"]
+    return h
+
+
+def results(b, i):
+    return [r for r in b[i]["messages"][-1]["content"]]
+
+
+def map_tools():
+    env = Env(typed("look"),
+              [reply([tool_use("m1", "map_view", {"x1": 0, "z1": 0, "x2": 9, "z2": 9}),
+                      tool_use("m2", "map_view", {"x1": 0, "z1": 0, "x2": 9, "z2": 9, "heights": True}),
+                      tool_use("m3", "map_find", {"name": "diamond", "near_x": 0, "near_y": 64, "near_z": 0}),
+                      tool_use("m4", "map_info", {}),
+                      tool_use("m5", "protect_area", {"name": "base", "x1": 0, "z1": 0, "x2": 3, "z2": 3})], "tool_use"),
+               reply([tool_use("m6", "map_view", {"x1": 0, "z1": 0, "x2": 9, "z2": 9, "y": 40})], "tool_use"),
+               reply([text("Done.")])],
+              modem=True, prelude='rednet.open("back")\n' + GIVE_12 + SEED_MAP).run()
+    pr, b = env.problems, env.bodies
+    expect(pr, "Claude wants" not in env.written, "map tools / protect_area asked for approval")
+    if len(b) != 3:
+        return pr + ["%d requests" % len(b)]
+    r = results(b, 1)
+    view, heights, find, info, prot = [x["content"] for x in r]
+    expect(pr, not any(x["is_error"] for x in r), "errors %r" % r)
+    lines = view.split("\n")
+    row2 = [l for l in lines if l.startswith("z=2 ")]
+    expect(pr, "Surface, x 0..9" in view and row2 and row2[0][8:18] == "::D::~::::" and "legend: ? unknown" in view
+           and "surface y in view: 64..64" in view and 'drone #12 "digger" at 2 65 2 facing east' in view
+           and "home 0 65 0" in view, "map_view %s" % view)
+    expect(pr, "  64" in heights and "z=0" in heights, "heights %s" % heights)
+    expect(pr, "3 40 3 minecraft:diamond_ore" in find, "map_find %s" % find)
+    expect(pr, "102 blocks" in info and "Protected areas: none" in info and "drone #12" in info and "coal 16" in info,
+           "map_info %s" % info)
+    expect(pr, 'protected 1. "base" x 0..3' in prot, "protect_area %s" % prot)
+    pf = env.M.FS["/os/map/protect"] or ""
+    expect(pr, '"base"' in pf and "rev" in pf, "protect file %r" % pf)
+    v2 = results(b, 2)[0]["content"]
+    expect(pr, "Layer y=40" in v2 and "P" in v2 and "protected here: 1." in v2, "layer view %s" % v2)
+    return pr
+
+
+def all_drones():
+    env = Env(typed("go") + [["host", "click", " Allow "], ["host", "ack"]],
+              [reply([tool_use("a1", "drone_command", {"id": 15, "command": "forward"})], "tool_use"),
+               reply([tool_use("a2", "drone_command", {"id": 16, "command": "forward"})], "tool_use"),
+               reply([text("ok")])],
+              modem=True, prelude='rednet.open("back")\n' + GIVE_12 + SEED_MAP + ALL_DRONES)
+    env.hosts["ack"] = last_cmd_ack(env)
+    env.run()
+    pr, b = env.problems, env.bodies
+    cmds = [x for x in env.sent() if x.msg.t == "cmd"]
+    expect(pr, len(cmds) == 1 and cmds[0].to == 15 and cmds[0].msg.cmd == "forward", "sent %r" % [(c.to, c.msg.cmd) for c in cmds])
+    if len(b) == 3:
+        r1 = results(b, 1)[0]
+        expect(pr, r1["content"] == "ok: started" and not r1["is_error"], "owned drone %r" % r1)
+        r2 = results(b, 2)
+        expect(pr, "belongs to computer #99" in r2[0]["content"] and r2[0]["is_error"], "foreign drone %r" % r2[0])
+    else:
+        pr.append("%d requests" % len(b))
+    return pr
+
+
+def all_drones_scan():
+    # no kernel cache: the drones are found with a ping; only this computer's own count
+    def st(owner):
+        return {"t": "status", "kind": "turtle", "label": "x", "owner": owner, "state": "ready"}
+    env = Env(typed("go") + [["rednet_message", 21, st(7), "wardenos"], ["rednet_message", 22, st(5), "wardenos"],
+                             ["host", "tick"], ["host", "ack"]],
+              [reply([tool_use("s1", "drone_command", {"command": "scan"})], "tool_use"), reply([text("ok")])],
+              modem=True, prelude='rednet.open("back")\n' + ALL_DRONES + 'local c = dofile("/os/lib/claude.lua").loadConfig() c.auto = true dofile("/os/lib/claude.lua").saveConfig(c)')
+    env.hosts["ack"] = last_cmd_ack(env)
+    env.run()
+    pr, b = env.problems, env.bodies
+    cmds = [x for x in env.sent() if x.msg.t == "cmd"]
+    pings = [x for x in env.sent() if x.msg.t == "ping"]
+    expect(pr, len(pings) == 1 and pings[0].to == "all", "no ping scan")
+    expect(pr, len(cmds) == 1 and cmds[0].to == 21, "sent %r" % [(c.to, c.msg.cmd) for c in cmds])
+    expect(pr, len(b) == 2 and results(b, 1)[0]["content"] == "ok: started", "result")
+    return pr
+
+
+def templates():
+    code = "local LENGTH = 5\nfor i = 1, LENGTH do turtle.forward() end\nreturn 'done'"
+    env = Env(typed("save") + [["host", "snap", "card"], ["host", "click", " Allow "], ["host", "ack"]],
+              [reply([tool_use("t1", "template_save", {"name": "Row 5", "description": "goes 5 forward", "code": code}),
+                      tool_use("t2", "template_save", {"name": "bad", "description": "x", "code": "for do"}),
+                      tool_use("t3", "template_save", {"name": "mine", "description": "x", "code": "return 1"}),
+                      tool_use("t4", "template_list", {})], "tool_use"),
+               reply([tool_use("t5", "template_run", {"name": "row 5"}),
+                      tool_use("t6", "template_run", {"name": "nope"})], "tool_use"),
+               reply([text("ok")])],
+              modem=True, files={"/os/templates": True,
+                                 "/os/templates/mine.dat": '{name = "mine", description = "player one", code = "return 2", author = "player"}'},
+              prelude='rednet.open("back")\n' + GIVE_12)
+    env.hosts["ack"] = last_cmd_ack(env)
+    env.run()
+    pr, b = env.problems, env.bodies
+    if len(b) != 3:
+        return pr + ["%d requests" % len(b)]
+    r = results(b, 1)
+    expect(pr, "saved template" in r[0]["content"] and not r[0]["is_error"], "save %r" % r[0])
+    expect(pr, "syntax error" in r[1]["content"] and r[1]["is_error"], "bad code %r" % r[1])
+    expect(pr, "player already has" in r[2]["content"] and r[2]["is_error"], "overwrote the player's %r" % r[2])
+    expect(pr, "Row 5 (by you): goes 5 forward" in r[3]["content"] and "mine (by the player)" in r[3]["content"], "list %r" % r[3])
+    fsv = env.M.FS["/os/templates/row_5.dat"] or ""
+    expect(pr, "claude" in fsv and "LENGTH" in fsv, "file %r" % fsv)
+    expect(pr, "Claude wants to use template_run" in env.snaps.get("card", "") and "LENGTH" in env.snaps.get("card", ""),
+           "card:\n" + env.snaps.get("card", ""))
+    cmds = [x for x in env.sent() if x.msg.t == "cmd"]
+    expect(pr, len(cmds) == 1 and cmds[0].to == 12 and cmds[0].msg.cmd == "run" and cmds[0].msg.arg.name == "Row 5"
+           and cmds[0].msg.arg.code == code, "run not sent")
+    r2 = results(b, 2)
+    expect(pr, r2[0]["content"] == "ok: started" and "No template named" in r2[1]["content"] and r2[1]["is_error"],
+           "run results %r" % r2)
+    return pr
+
+
+def goto_mapdata():
+    env = Env(typed("go") + [["host", "click", " Allow "], ["host", "ack"], ["host", "ack"]],
+              [reply([tool_use("g1", "drone_command", {"command": "goto", "arg": {"x": 8, "y": 65, "z": 8}})], "tool_use"),
+               reply([tool_use("g2", "drone_command", {"command": "protect", "arg": {}})], "tool_use"),
+               reply([text("ok")])],
+              modem=True, prelude='rednet.open("back")\n' + GIVE_12 + SEED_MAP)
+    env.hosts["ack"] = last_cmd_ack(env)
+    env.run()
+    pr, b = env.problems, env.bodies
+    cmds = [x for x in env.sent() if x.msg.t == "cmd"]
+    expect(pr, [c.msg.cmd for c in cmds] == ["mapdata", "goto"], "sent %r" % [c.msg.cmd for c in cmds])
+    if len(cmds) == 2:
+        blocks = cmds[0].msg.arg.blocks
+        expect(pr, len(blocks) == 101 and blocks[1][4] != "air", "mapdata %d blocks" % len(blocks))
+        expect(pr, cmds[1].msg.arg.x == 8 and cmds[1].msg.arg.z == 8, "goto arg")
+    if len(b) == 3:
+        r = results(b, 1)[0]["content"]
+        expect(pr, r.startswith("ok: started") and "sent 101 known blocks" in r, "goto result %r" % r)
+        r2 = results(b, 2)[0]
+        expect(pr, "protect_area" in r2["content"] and r2["is_error"], "protect cmd %r" % r2)
+    else:
+        pr.append("%d requests" % len(b))
+    return pr
+
+
+def status_fields():
+    d = {"t": "status", "kind": "turtle", "label": "digger", "task": "manual", "state": "ready", "fuel": 400,
+         "fuelLimit": 20000, "fuelItems": 7, "calibrated": True, "abs": {"x": 10, "y": 70, "z": -5, "f": 3},
+         "origin": {"x": 0, "y": 64, "z": 0, "f": 0}, "safeDig": False, "protectRev": 0, "homeSet": True,
+         "nav": {"x": 1, "y": 0, "z": 0, "f": 0}, "items": [], "log": []}
+    env = Env(typed("s") + [["rednet_message", 12, d, "wardenos"], ["host", "tick"]],
+              [reply([tool_use("s1", "drone_status", {})], "tool_use"), reply([text("ok")])],
+              modem=True, prelude='rednet.open("back")\n' + GIVE_12).run()
+    pr, b = env.problems, env.bodies
+    if len(b) == 2:
+        r = results(b, 1)[0]["content"]
+        expect(pr, "position: 10 70 -5 facing west" in r and "home: 0 64 0 facing north" in r
+               and "fuel items (coal): 7" in r and "safe dig OFF" in r and "rev 0" in r, "status %r" % r)
+    else:
+        pr.append("%d requests" % len(b))
+    return pr
+
+
+def options_all():
+    env = Env([["host", "click", " options "], ["host", "click", " All mine "], ["host", "snap", "o"],
+               ["host", "click", " Back "]], []).run()
+    pr = env.problems
+    cfg = env.rt.eval('function() return dofile("/os/lib/claude.lua").loadConfig() end')()
+    expect(pr, cfg.allDrones is True, "allDrones not saved")
+    expect(pr, "Drones Claude may use" in env.snaps.get("o", ""), "option not shown")
+    return pr
+
+
 SCENARIOS = [("a plain chat + exact history echo", plain_chat), ("b tool loop, Allow button", tool_allow),
                  ("b2 Always button", tool_always), ("c Deny button", tool_deny), ("d parallel tool calls", parallel_tools),
                  ("e1 500/503 retries then 200", retries), ("e2 retries exhausted -> rollback", retries_exhausted),
@@ -556,7 +754,14 @@ SCENARIOS = [("a plain chat + exact history echo", plain_chat), ("b tool loop, A
                  ("f1 drone tool without drones", drones_none), ("f2 drone_task + foreign drone refused", drones_task),
                  ("g drone_status wait_seconds", drones_status), ("h options view", options), ("i no key -> key screen", no_key),
                  ("j server caps the timeout", timeout_capped), ("j2 server refuses any timeout", timeout_refused),
-                 ("j3 request can't be sent", send_error)]
+                 ("j3 request can't be sent", send_error),
+                 ("k1 map tools + protect_area without approval", map_tools),
+                 ("k2 all my drones: owned drone allowed, foreign refused", all_drones),
+                 ("k3 all my drones found by a ping", all_drones_scan),
+                 ("k4 templates: save, list, run", templates),
+                 ("k5 goto sends the map first; protect command refused", goto_mapdata),
+                 ("k6 drone_status: abs, home, coal, safe dig", status_fields),
+                 ("k7 options: all my drones", options_all)]
 for name, fn in SCENARIOS:
     scenario(name, fn)
 

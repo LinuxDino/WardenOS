@@ -6,9 +6,10 @@
 -- Nothing here blocks: drone commands are relayed with a table of pending relays + timers, and the
 -- pocket's Claude conversation runs as a coroutine (/os/pocket/claudecore.lua) resumed from M.event.
 --
--- Pocket -> server: pocket_pair, pocket_unpair, pocket_drones, pocket_cmd {drone, cmd, arg, seq},
+-- Pocket -> server: pocket_pair, pocket_unpair, pocket_drones, pocket_cmd {drone, cmd, arg, seq}, pocket_templates,
 --                   pocket_claude {op = send (text) | decision (choice) | new | poll}
 -- Server -> pocket: pocket_paired {ok}, pocket_unpaired, pocket_drones {drones}, pocket_ack {seq, cmd, ok, info},
+--                   pocket_templates {templates = { {name, description, author, code}, ... }},
 --                   pocket_claude {log, busy, status, approval, error}, pocket_error {info, req, seq}
 local PROTO = "wardenos"
 local PAIRED = "/os/pockets"
@@ -242,6 +243,18 @@ local function onMessage(from, msg)
     onCmd(from, msg)
   elseif t == "pocket_claude" then
     onClaude(from, msg)
+  elseif t == "pocket_templates" then             -- saved drone programs; run one with pocket_cmd "run" {name, code}
+    local ok, tpl = pcall(dofile, "/os/lib/templates.lua")
+    local list = {}
+    if ok and type(tpl) == "table" then
+      for i, e in ipairs(tpl.list()) do
+        if i > 30 then break end
+        local full = tpl.get(e.slug)
+        list[#list + 1] = { name = e.name, description = e.description, author = e.author,
+                            code = full and full.code or nil }
+      end
+    end
+    reply(from, { t = "pocket_templates", templates = list })
   else
     reply(from, { t = "pocket_error", info = "unknown request", req = t, seq = msg.seq })
   end

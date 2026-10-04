@@ -54,7 +54,8 @@ class Env:
         if src:
             for d in ("/os", "/os/lib", "/os/apps"):
                 self.M.FS[d] = True
-            for p in ("os/lib/map.lua", "os/lib/claude.lua", "os/lib/json.lua", "os/apps/map.lua", "os/apps/drones.lua"):
+            for p in ("os/lib/map.lua", "os/lib/claude.lua", "os/lib/json.lua", "os/apps/map.lua", "os/apps/drones.lua",
+                      "os/lib/templates.lua"):
                 self.M.FS["/" + p] = read("src/" + p)
         for k, v in (files or {}).items():
             self.M.FS[k] = v
@@ -400,6 +401,62 @@ check("> 120 64 -30" in env.shots.get("form", ""), "drones app: form not prefill
 check("facing: N, E, S or W" in env.shots.get("bad", ""), "drones app: bad input not explained:\n" + env.shots.get("bad", ""))
 check("120 64 -30 E" in env.shots.get("calibrated", ""), "drones app: abs position:\n" + env.shots.get("calibrated", ""))
 print("drones app: ok" if len(fail) == nfail else "drones app: FAILED")
+nfail = len(fail)
+
+# ---------------------------------------------------------------- 5. Drones app: templates
+TPL = r"""
+local t = dofile("/os/lib/templates.lua")
+assert(t.save({ name = "Cross 9x15", description = "builds a cross of cobblestone on the hill top", author = "claude",
+                code = "local WIDTH = 9\nlocal HEIGHT = 15\nfor i = 1, HEIGHT do turtle.up() end\nreturn 'ok'" }))
+assert(t.save({ name = "Dig 3", description = "digs 3 forward", author = "player", code = "for i = 1, 3 do turtle.dig() end" }))
+assert(not t.save({ name = "bad", code = "for do" }))
+assert(t.slug("My Cool/Thing!") == "my_cool_thing_")
+"""
+env = Env(CW=46, CH=17, events=[
+    ["rednet_message", 12, tstatus(7, 2), "wardenos"],
+    ["rednet_message", 13, tstatus(7, 2, label="helper"), "wardenos"],
+    ["host", "click", " templates "], ["host", "shot", "list"],
+    ["host", "click", "Cross 9x15"], ["host", "shot", "detail"],
+    ["host", "click", " Run on #13 "],
+    ["rednet_message", 13, {"t": "ack", "seq": 1, "cmd": "run", "ok": True, "info": "started"}, "wardenos"],
+    ["host", "shot", "acked"],
+    ["host", "click", " < "], ["host", "click", "Dig 3"], ["host", "click", " Delete "], ["host", "click", " Sure? delete "],
+    ["host", "shot", "deleted"],
+    ["host", "click", " < "], ["host", "click", "#12 miner"], ["host", "shot", "drone"],
+    ["host", "click", " Templates "], ["host", "click", "Cross 9x15"], ["host", "shot", "pre"],
+    ["host", "click", " Run on #12 "],
+])
+ok, err = env.run_app("/os/apps/drones.lua", 'rednet.open("back")\n' + TPL)
+sh = env.shots
+check(err == "SCRIPT_END", "templates: %s" % err)
+check(env.M.violations == 0 and not env.problems, "templates: %d off-screen, %s" % (env.M.violations, env.problems))
+check("Templates (2)" in sh.get("list", "") and "AI Cross 9x15" in sh.get("list", "") and "Dig 3" in sh.get("list", ""),
+      "templates: list:\n" + sh.get("list", ""))
+det = sh.get("detail", "")
+check("by Claude" in det and "builds a cross" in det and "local WIDTH = 9" in det and " Run on #12 " in det
+      and " Run on #13 " in det and " Delete " in det, "templates: detail:\n" + det)
+check("run ok: started" in sh.get("acked", ""), "templates: ack:\n" + sh.get("acked", ""))
+check("deleted Dig 3" in sh.get("deleted", "") and "/os/templates/dig_3.dat" not in env.fs(), "templates: delete:\n" + sh.get("deleted", ""))
+check(" Templates " in sh.get("drone", ""), "templates: no button in the drone view:\n" + sh.get("drone", ""))
+check(" Run on #12 " in sh.get("pre", "") and " Run on #13 " not in sh.get("pre", ""), "templates: not preselected:\n" + sh.get("pre", ""))
+runs = [m for m in env.sent() if m["msg"].get("cmd") == "run"]
+check([m["to"] for m in runs] == [13, 12] and runs[0]["msg"]["arg"]["name"] == "Cross 9x15"
+      and "local WIDTH = 9" in runs[0]["msg"]["arg"]["code"], "templates: run messages %s" % runs)
+print("drones templates: ok" if len(fail) == nfail else "drones templates: FAILED")
+nfail = len(fail)
+
+# pocket server: pocket_templates lists them (with code, so the pocket can send pocket_cmd "run")
+files = dict(DESK)
+files["/os/pockets"] = "{[20] = true}"
+env = Env(files=files, src=False)
+env.rt.execute('rednet.open("back")\n' + TPL)
+S = env.rt.execute('return dofile("/os/lib/pocketserver.lua")')
+S.event(env.lua(["rednet_message", 20, {"t": "pocket_templates"}, "wardenos", ]))
+last = env.sent()[-1] if env.sent() else {}
+tl = last.get("msg", {}).get("templates", []) if last.get("to") == 20 else []
+check(last.get("msg", {}).get("t") == "pocket_templates" and [t["name"] for t in tl] == ["Cross 9x15", "Dig 3"]
+      and "local WIDTH" in tl[0]["code"] and tl[0]["author"] == "claude", "pocket_templates: %s" % last)
+print("pocket templates: ok" if len(fail) == nfail else "pocket templates: FAILED")
 
 print()
 if fail:
