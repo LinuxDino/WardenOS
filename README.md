@@ -39,16 +39,14 @@ the terms, your account and a clean install (this erases the computer).
 
 ## Drones (turtles)
 
-Put a wireless or ender modem on the turtle, then either:
-
-- run the same Pastebin command on the turtle (`pastebin get CeQfPV78 install`, then `install`). On a turtle it
-  installs the drone agent only: no erase, other files stay, the old `startup.lua` is kept as `startup.old.lua`.
-- or open **Drones** on a WardenOS computer, put a floppy in a disk drive and tap **install disk**. Every turtle
-  placed next to that drive installs the agent when it starts and is owned by that computer.
+Put a wireless or ender modem on the turtle, then run the same Pastebin command on it
+(`pastebin get CeQfPV78 install`, then `install`). On a turtle it installs the drone agent only: no erase, other
+files stay, the old `startup.lua` is kept as `startup.old.lua`.
 
 In **Drones**, tap a turtle and **Claim** it (only its owner can control it). Then drive it, dig, place, refuel,
 locate (needs GPS) or **Update** it to the newest agent from GitHub.
 
+- **update all** in the list updates every drone you own to the newest agent from GitHub (each one reboots).
 - **Set home here** makes the drone's current spot and direction its home. The drone tracks every move it makes
   (no GPS needed), so **Go home** drives it back, and **all home** in the list calls every drone you own back.
 - Drones can run **tasks**: small Lua programs that run on the turtle by themselves; their `print`/`report` lines

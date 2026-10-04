@@ -27,8 +27,6 @@ return {
     "os/apps/settings.lua",
     "os/apps/terminal.lua",
     "os/drone/agent.lua",
-    "os/drone/disk.lua",
-    "os/drone/diskstartup.lua",
     "os/drone/startup.lua",
     "os/pocket/claudecore.lua",
     "os/pocket/main.lua",

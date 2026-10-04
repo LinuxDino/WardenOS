@@ -92,7 +92,6 @@ return {
         put(2, 3, "Nothing found yet.", T.dim)
         put(2, 5, "Install the drone agent on a turtle:", T.dim)
         put(2, 6, "pastebin get CeQfPV78 install", T.text)
-        put(2, 7, "or tap 'install disk' below.", T.dim)
       end
       local rows = h - 3
       scroll = math.max(0, math.min(scroll, #all - rows))
@@ -123,17 +122,15 @@ return {
           end
           msg = n > 0 and ("Calling " .. n .. " drone(s) home") or "No drones of yours online"
         end, fg = T.accent },
-        { "install disk", function()
-          local ok, res = pcall(dofile, "/os/drone/disk.lua")
-          if ok and type(res) == "function" then
-            local ok2, info = res(me)
-            msg = info or (ok2 and "Disk ready" or "Failed")
-          else
-            msg = "disk maker missing: " .. tostring(res)
+        { "update all", function()
+          local n = 0
+          for _, d in ipairs(all) do
+            if d.kind == "turtle" and d.owner == me and online(d) then sendTo(d.id, "update") n = n + 1 end
           end
+          msg = n > 0 and ("Updating " .. n .. " drone(s) from GitHub") or "No drones of yours online"
         end },
       })
-      if msg ~= "" then put(28, h, msg:sub(1, w - 28), T.warn) end
+      if msg ~= "" then put(25, h, msg:sub(1, w - 25), T.warn) end
     end
 
     ------------------------------------------------ detail view

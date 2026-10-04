@@ -1,6 +1,6 @@
 -- WardenOS Drone agent (runs on a turtle)
 -- Reports status over rednet (protocol "wardenos") and takes commands from its owner computer.
--- Installed by the WardenOS installer or an install disk; started by /startup.lua.
+-- Installed by the WardenOS installer; started by /startup.lua.
 local VERSION = "1.3.0"
 local PROTO = "wardenos"
 local CFG = "/os/drone/config"

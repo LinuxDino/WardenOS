@@ -257,6 +257,8 @@ ev = login_ev + [["mouse_click", 1, 3, 2], ["mouse_click", 1, tx + 1, ty],
                  ["rednet_message", 12, "STATUS_MINE", "wardenos"],
                  ["mouse_click", 1, wx + 2, wy + 9],            # Fwd
                  ["rednet_message", 12, "ACK", "wardenos"],
+                 ["mouse_click", 1, wx + 1, wy + 1],            # back to the list
+                 ["mouse_click", 1, wx + 13, wy + min(app_h, 18) - 1],   # "update all" in the footer
                  ["key", F12]]
 evs = []
 for e in ev:
@@ -274,6 +276,7 @@ check("stopped" in log and "crashed" not in screen_text(M), "drones app: crashed
 check((30, "status", None, "wardenos") in msgs, "kernel: did not answer a ping: %s" % msgs)
 check((12, "cmd", "claim", "wardenos") in msgs, "drones app: claim not sent: %s" % msgs)
 check((12, "cmd", "forward", "wardenos") in msgs, "drones app: forward not sent: %s" % msgs)
+check((12, "cmd", "update", "wardenos") in msgs, "drones app: update all did not update drone 12: %s" % msgs)
 check(any("forward ok" in w for w in M.written.values()) or "forward ok" in screen_text(M), "drones app: ack not shown")
 check(M.violations == 0, "drones app: drew off-screen")
 print("drones app: ok" if not [f for f in fail if f.startswith("drones") or f.startswith("kernel")] else "drones app: FAILED")
@@ -312,31 +315,6 @@ check('owner' in snapshot_fs(M).get("/os/drone/config", ""), "agent: owner not s
 check(M.violations == 0, "agent: drew off-screen %s" % [l for l in M.log.values() if "OFFSCREEN" in l][:3])
 print("drone agent: ok" if not [f for f in fail if f.startswith("agent")] else "drone agent: FAILED")
 
-# --- install disk made by the Drones app, then a turtle boots from it
-rt, M = new_env(51, 19, 0, 0, [], [], pc)
-rt.globals().DRIVE = True
-res = rt.eval("function() return table.pack(dofile('/os/drone/disk.lua')(7)) end")()
-dfs = snapshot_fs(M)
-check(res[1] is True and dfs.get("/disk/startup.lua") == read("src/os/drone/diskstartup.lua")
-      and dfs.get("/disk/wardenos/agent.lua") == read("src/os/drone/agent.lua"), "disk maker failed: %s" % res[2])
-tfs = {k: v for k, v in dfs.items() if k.startswith("/disk")}
-tfs["/startup.lua"] = "print('old')"
-rt, M = turtle_env([], tfs)
-rt.globals().TURTLE = True
-M.program = "disk/startup.lua"
-ok, err = run(rt, tfs["/disk/startup.lua"], "disk/startup.lua")
-t2 = snapshot_fs(M)
-check(ok and t2.get("/os/drone/agent.lua") == read("src/os/drone/agent.lua")
-      and t2.get("/startup.lua") == read("src/os/drone/startup.lua") and t2.get("/startup.old.lua") == "print('old')"
-      and "owner = 7" in t2.get("/os/drone/config", "").replace('["owner"]', "owner") and M.label == "drone-7"
-      and "/os/drone/agent.lua" in (M.shellRuns or ""), "disk install on turtle failed: %s %s" % (err, sorted(t2)))
-# a computer booting with the disk inserted still starts its own system
-rt, M = new_env(51, 19, 0, 0, [], [], tfs)
-M.program = "disk/startup.lua"
-ok, err = run(rt, tfs["/disk/startup.lua"], "disk/startup.lua")
-check(ok and M.shellRuns == "/startup.lua;" and "/os/drone/agent.lua" not in snapshot_fs(M),
-      "disk on a computer: did not hand over to its own startup (%s)" % M.shellRuns)
-print("install disk: ok" if not [f for f in fail if f.startswith("disk")] else "install disk: FAILED")
 
 # --- installer on a turtle installs the agent (no wizard, no erase); also via the Pastebin loader
 for script, name in [(read("install.lua"), "install.lua"), (read("pastebin.lua"), "pastebin.lua")]:
