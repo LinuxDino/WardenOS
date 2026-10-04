@@ -120,11 +120,11 @@ for (CW, CH, MW, MH) in [(51, 19, 0, 0), (51, 19, 57, 24), (51, 19, 29, 13), (51
 
     def tiles(W, H):
         cols = max(1, (W - 8) // 12)
-        th = 3 if cols * ((H - 2) // 4) >= len(app_ids) else 1
+        th, gap = (3, 1) if cols * ((H - 2) // 4) >= len(app_ids) else (1, 0)
         out = []
         for i, a in enumerate(app_ids):
             c, r = i % cols, i // cols
-            y = 4 + r * (th + 1)
+            y = 4 + r * (th + gap)
             if y + th - 1 <= H:
                 out.append((a, 8 + c * 12, y))
         return out

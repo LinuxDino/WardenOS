@@ -287,12 +287,12 @@ local TW = 12                                   -- tile width incl. gap
 local function viewLayout()
   local x0, y0 = DW + 2, 4
   local cols = math.max(1, math.floor((W - DW - 2) / TW))
-  local th = 3
-  if cols * math.floor((H - y0 + 2) / 4) < #order then th = 1 end
+  local th, gap = 3, 1
+  if cols * math.floor((H - y0 + 2) / 4) < #order then th, gap = 1, 0 end   -- compact: one row per app
   local tiles = {}
   for i, id in ipairs(order) do
     local c, r = (i - 1) % cols, math.floor((i - 1) / cols)
-    local y = y0 + r * (th + 1)
+    local y = y0 + r * (th + gap)
     if y + th - 1 <= H then
       tiles[#tiles + 1] = { id = id, x = x0 + c * TW, y = y, w = math.min(TW - 2, W - (x0 + c * TW)), h = th }
     end
