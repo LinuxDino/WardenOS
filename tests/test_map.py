@@ -6,8 +6,10 @@
 2. the kernel (booted via /startup.lua like a real computer): stores incoming {t="map"} messages, pushes the
    protected areas to a drone of this computer that has an old copy (rate-limited, never to other owners' drones),
    writes the map when it stops
+   zoom (1, 2, 4, 8, 16 blocks per character): aggregation priority, marks, scale text, 60x40 cap, speed
 3. the Map app at 46x18 (window content 46x17): renders without drawing off-screen, drone marker, tap info,
-   the protect-area flow (two corners + name) and deleting an area
+   the protect-area flow (two corners + name) and deleting an area; zoom buttons/keys, center, tap and protect
+   at zoom 4
 4. the Drones app: Calibrate form sends `calibrate` with {x, y, z, facing}, Use GPS / Scan / Safe dig buttons
 """
 import os, sys
@@ -240,6 +242,96 @@ n, rows = env.rt.execute(BULK)
 size = sum(len(v) for k, v in env.fs().items() if k.startswith("/os/map/") and isinstance(v, str))
 check(n == 20000 and rows == 40, "map bulk: %s blocks %s rows" % (n, rows))
 check(size / 20000 < 3.3, "map bulk: %.2f bytes per block" % (size / 20000))
+# zoom: aggregation priority, marks, scale text, the 60x40 character cap, zoom normalization, the grid cache
+ZOOM = r"""
+local map = dofile("/os/lib/map.lua")
+local R = {}
+local function ok(c, m) if not c then R[#R + 1] = m end end
+local obs = {}
+for x = 0, 7 do for z = 0, 7 do obs[#obs + 1] = { x, 64, z, "minecraft:stone" } end end
+obs[#obs + 1] = { 5, 64, 5, "minecraft:oak_planks" }              -- building in cell (1,1) at zoom 4
+obs[#obs + 1] = { 17, 64, 2, "minecraft:dirt" }                   -- one known column in an unknown cell
+obs[#obs + 1] = { 24, 64, 0, "minecraft:water" } obs[#obs + 1] = { 25, 60, 1, "minecraft:iron_ore" }
+obs[#obs + 1] = { 28, 64, 0, "air" } obs[#obs + 1] = { 29, 64, 1, "minecraft:poppy" }
+obs[#obs + 1] = { 32, 64, 0, "air" }
+map.add(obs)
+ok(map.zoom(3) == 2 and map.zoom(5) == 4 and map.zoom(7) == 8 and map.zoom(100) == 16 and map.zoom(0) == 1
+   and map.zoom(-4) == 1 and map.zoom("x") == 1 and map.zoom(nil) == 1 and map.zoom("16") == 16, "zoom normalize")
+local rows, legend, area = map.view(0, 0, 7, 7, nil, nil, 4)
+ok(#rows == 2 and rows[1] == "##" and rows[2] == "#=", "zoom 4 building beats stone " .. table.concat(rows, "/"))
+ok(area.zoom == 4 and area.w == 2 and area.h == 2 and area.scale == "1 char = 4x4 blocks" and area.x2 == 7,
+   "zoom 4 area " .. textutils.serialize(area))
+ok(legend:find("1 char = 4x4 blocks", 1, true) and legend:find("# stone", 1, true), "zoom 4 legend " .. legend)
+ok(area.ylo == 64 and area.yhi == 64, "surface y range")
+rows = map.view(0, 0, 7, 7, nil, nil, 2)
+ok(#rows == 4 and rows[3] == "##=#" and rows[1] == "####", "zoom 2 " .. table.concat(rows, "/"))
+rows = map.view(0, 0, 100, 100, nil, nil, 16)
+ok(#rows == 7 and #rows[1] == 7 and rows[1] == "=o.????" and rows[2] == "???????", "zoom 16 " .. table.concat(rows, "/"))
+rows = map.view(16, 0, 35, 3, nil, nil, 4)
+ok(rows[1] == ":?o,.", "known beats unknown / ore beats water / plants beat air " .. tostring(rows[1]))
+rows = map.view(0, 0, 7, 7, 64, nil, 4)
+ok(rows[1] == "##" and rows[2] == "#=", "layer zoom " .. table.concat(rows, "/"))
+rows = map.view(0, 0, 7, 7, 65, nil, 4)
+ok(rows[1] == "??" and rows[2] == "??", "layer zoom, nothing at y " .. table.concat(rows, "/"))
+-- marks land in the cell that contains them; D/H beat blocks
+rows = map.view(0, 0, 7, 7, nil, { { x = 6, z = 1, ch = "D" }, { x = 5, z = 6, ch = "H" }, { x = 99, z = 99 } }, 4)
+ok(rows[1] == "#D" and rows[2] == "#H", "zoom marks " .. table.concat(rows, "/"))
+-- the cap: 60 x 40 characters
+rows, legend, area = map.view(0, 0, 5000, 5000, nil, nil, 16)
+ok(#rows == 40 and #rows[1] == 60 and area.x2 == 959 and area.z2 == 639 and area.w == 60 and area.h == 40,
+   "zoom 16 cap " .. #rows .. "x" .. #rows[1] .. " " .. area.x2)
+rows, legend, area = map.view(0, 0, 5000, 5000, nil, nil, 5)
+ok(area.zoom == 4 and #rows == 40 and #rows[1] == 60 and area.x2 == 239, "zoom 5 -> 4")
+rows, legend, area = map.view(0, 0, 7, 7, nil, nil, "junk")
+ok(area.zoom == 1 and #rows == 8 and area.scale == "1 char = 1 block" and not legend:find("char =", 1, true), "bad zoom -> 1")
+-- the grid cache: same table while nothing changes, rebuilt after add() and protect()
+local g1 = map.grid(0, 0, 7, 7, nil, 4)
+ok(map.grid(0, 0, 7, 7, nil, 4) == g1, "grid not cached")
+ok(g1.name[4] == "minecraft:oak_planks" and g1.by[4] == 64, "grid dominant block " .. tostring(g1.name[4]))
+local rev = map.rev
+map.add({ { 1, 64, 1, "minecraft:lava" } })
+ok(map.rev > rev and map.grid(0, 0, 7, 7, nil, 4) ~= g1, "grid not rebuilt after add")
+ok(map.view(0, 0, 7, 7, nil, nil, 4)[1] == "^#", "lava beats stone")
+-- protected overlay wins over everything at zoom > 1 (also over a drone), only when the layer is inside its y range
+map.protect({ name = "p", x1 = 1, z1 = 1, x2 = 1, z2 = 1 })
+map.protect({ name = "high", x1 = 4, z1 = 4, x2 = 4, z2 = 4, y1 = 100, y2 = 120 })
+rows = map.view(0, 0, 7, 7, nil, { { x = 2, z = 2, ch = "D" } }, 4)
+ok(rows[1] == "P#" and rows[2] == "#P", "zoom protected overlay " .. table.concat(rows, "/"))
+rows = map.view(0, 0, 7, 7, 64, nil, 4)
+ok(rows[1] == "P#" and rows[2] == "#=", "zoom protected overlay, layer " .. table.concat(rows, "/"))
+ok(map.view(0, 0, 7, 7, nil, { { x = 1, z = 1, ch = "D" } })[2]:sub(2, 2) == "D", "zoom 1: marks still on top")
+return R
+"""
+env = Env()
+res = env.rt.execute(ZOOM)
+for i in range(1, len(res) + 1):
+    check(False, "map zoom: " + res[i])
+
+# speed: 400000 blocks over 800 x 500 columns, one 60 x 40 view at zoom 16 (960 x 640 blocks), surface and layer
+PERF = r"""
+local map = dofile("/os/lib/map.lua")
+map.CAP = 1000000
+local names = { "minecraft:stone", "minecraft:grass_block", "minecraft:oak_log", "minecraft:water", "minecraft:sand" }
+local obs = {}
+for x = 0, 799 do for z = 0, 499 do
+  obs[#obs + 1] = { x, 60 + (x * 7 + z * 3) % 9, z, names[(x * z) % 5 + 1] }
+  if #obs == 512 then map.add(obs) obs = {} end end end
+map.add(obs)
+local t0 = os.clock()
+local rows = map.view(-80, -70, 2000, 2000, nil, nil, 16)
+local t1 = os.clock()
+local lrows = map.view(-80, -70, 2000, 2000, 64, nil, 16)
+local t2 = os.clock()
+map.view(-80, -70, 2000, 2000, 64, nil, 16)
+local t3 = os.clock()
+return map.count(), t1 - t0, t2 - t1, t3 - t2, #rows, #rows[1], rows[10]
+"""
+env = Env()
+n, ts, tl, tc, nr, nc, r10 = env.rt.execute(PERF)
+print("map zoom 16 view over %d blocks: surface %.3f s, layer %.3f s, cached %.4f s (plain Lua)" % (n, ts, tl, tc))
+check(n == 400000 and nr == 40 and nc == 60 and "?" not in r10[6:55], "map perf: %s blocks %sx%s %r" % (n, nr, nc, r10))
+check(ts < 0.5 and tl < 0.5, "map perf: zoom 16 view too slow: %.3f / %.3f s" % (ts, tl))
+check(tc < 0.01, "map perf: cached view not cached: %.4f s" % tc)
 print("map library: ok (%.2f bytes/block on disk)" % (size / 20000) if not fail else "map library: FAILED")
 nfail = len(fail)
 
@@ -321,7 +413,7 @@ env = Env(CW=46, CH=17, events=[
 ] + [["char", ch] for ch in "my house"] + [["key", ENTER],
     ["host", "shot", "saved"], ["host", "fsnap", "/os/map/protect"],
     ["host", "click", " > "], ["host", "click", " v "], ["key", 203], ["key", 200], ["mouse_scroll", 1, 10, 5],
-    ["host", "click", " Layer "], ["host", "click", " + "], ["host", "shot", "layer"], ["host", "click", " Surf "],
+    ["host", "click", " Layer "], ["host", "click", " y+ "], ["host", "shot", "layer"], ["host", "click", " Surf "],
     ["host", "click", " Center "], ["host", "shot", "center"],
     ["host", "click", " Areas "], ["host", "shot", "areas"],
     ["host", "click", " delete "], ["host", "click", " sure? "], ["host", "shot", "deleted"],
@@ -355,6 +447,56 @@ check("centered on drone #12" in sh.get("center", ""), "map app: center:\n" + sh
 check("my house" in sh.get("areas", "") and "x 90..96" in sh.get("areas", ""), "map app: areas:\n" + sh.get("areas", ""))
 check("No protected areas" in sh.get("deleted", "") and (unser(env.fs().get("/os/map/protect")) or {}).get("rev") == 2,
       "map app: delete:\n" + sh.get("deleted", ""))
+
+# zoom: buttons and keys change the scale, the center stays, tap info and the protect flow at zoom 4
+# at zoom z: left = (floor(100 / z) - 23) * z, top = (floor(200 / z) - 6) * z; block (x, z) is in screen
+# column floor((x - left) / z) + 1, row floor((z - top) / z) + 2
+zcol = lambda x, z=4: (x - (100 // z - 23) * z) // z + 1
+zrow = lambda bz, z=4: (bz - (200 // z - 6) * z) // z + 2
+env = Env(CW=46, CH=17, events=[
+    ["host", "click", " + "], ["host", "shot", "z1"],                     # already at 1: stays
+    ["key", 209], ["host", "shot", "z2"],                                  # PageDown: zoom out
+    ["char", "-"], ["host", "shot", "z4"],
+    ["host", "tap", zcol(104), zrow(196)], ["host", "shot", "tap4"],
+    ["host", "click", " Protect "],
+    ["host", "tap", zcol(88), zrow(192)], ["host", "shot", "corner4"],
+    ["host", "tap", zcol(96), zrow(200)],
+] + [["char", ch] for ch in "zoomed"] + [["key", ENTER], ["host", "fsnap", "/os/map/protect"],
+    ["host", "click", " + "], ["host", "shot", "in2"], ["char", "+"], ["host", "shot", "in1"],
+    ["key", 209], ["key", 209], ["key", 209], ["key", 209], ["key", 209], ["host", "shot", "z16"],
+    ["key", 205], ["host", "shot", "pan16"], ["host", "click", " Center "], ["host", "shot", "center16"],
+    ["mouse_scroll", 1, 10, 5], ["host", "shot", "scroll16"],
+    ["host", "click", " Layer "], ["host", "click", " + "], ["host", "shot", "layer16"],
+    ["key", 201], ["host", "shot", "layer4"],
+    ["host", "tap", 1, 2], ["host", "tap", 46, 14], ["timer", 1],
+])
+ok, err = env.run_app("/os/apps/map.lua", SEED)
+sh = env.shots
+check(err == "SCRIPT_END" and not env.problems, "map zoom app: %s %s" % (err, env.problems))
+check(env.M.violations == 0, "map zoom app: %d chars off-screen %s" % (env.M.violations,
+      [l for l in env.M.log.values() if "OFFSCREEN" in l][:3]))
+hdr = lambda k: sh.get(k, "").split("\n")[0]
+for k, zz in (("z1", 1), ("z2", 2), ("z4", 4), ("in2", 2), ("in1", 1), ("z16", 16)):
+    check((" x%d " % zz) in hdr(k) and "100,200" in hdr(k), "map zoom app: %s header %r" % (k, hdr(k)))
+z4 = sh.get("z4", "").split("\n")
+check(len(z4) == 17 and z4[zrow(200) - 1][zcol(100) - 1] == "D" and z4[zrow(200) - 1][zcol(95) - 1] == "H",
+      "map zoom app: zoom 4 markers / center:\n" + sh.get("z4", ""))
+check(z4[zrow(196) - 1][zcol(100) - 1] == "~" and z4[zrow(196) - 1][zcol(104) - 1] == ":"
+      and z4[zrow(192) - 1][zcol(104) - 1] == "=", "map zoom app: zoom 4 cells:\n" + sh.get("z4", ""))
+check("x104..107 z196..199 y64 grass_block" in sh.get("tap4", ""), "map zoom app: tap info:\n" + sh.get("tap4", ""))
+check("corner 1: 88..91 192..195" in sh.get("corner4", ""), "map zoom app: corner:\n" + sh.get("corner4", ""))
+pb = (unser(env.fsnaps.get("/os/map/protect")) or {}).get("boxes") or [{}]
+check(pb[0] == {"name": "zoomed", "x1": 88, "x2": 99, "z1": 192, "z2": 203, "y1": -64, "y2": 320},
+      "map zoom app: protect box %s" % pb)
+in1 = sh.get("in1", "").split("\n")
+check(in1[row(200) - 1][col(100) - 1] == "D", "map zoom app: back at zoom 1:\n" + sh.get("in1", ""))
+check("x16 276,200" in hdr("pan16"), "map zoom app: pan at zoom 16 %r" % hdr("pan16"))
+c16 = sh.get("center16", "").split("\n")
+check("centered on drone #12" in sh.get("center16", "") and c16[zrow(200, 16) - 1][zcol(100, 16) - 1] == "D",
+      "map zoom app: center at zoom 16:\n" + sh.get("center16", ""))
+check("100,264" in hdr("scroll16"), "map zoom app: scroll at zoom 16 %r" % hdr("scroll16"))
+check(" x8 " in hdr("layer16") and "y=" in hdr("layer16") and " x4 " in hdr("layer4"), "map zoom app: layer + zoom %r %r"
+      % (hdr("layer16"), hdr("layer4")))
 
 # empty map, no drones, no modem: still draws
 env = Env(CW=46, CH=17, modem=False, events=[["host", "shot", "empty"], ["host", "tap", 20, 8], ["host", "click", " Center "],

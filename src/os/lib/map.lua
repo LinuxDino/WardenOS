@@ -7,10 +7,16 @@
 --   map.get(x, y, z)              block name, or nil if never seen
 --   map.surface(x, z)             y, name of the highest known non-air block in that column (nil if none)
 --   map.cell(x, z, y)             char, name, y for one map cell (y = nil: surface); chars are in map.LEGEND
---   map.view(x1, z1, x2, z2, y, marks)
+--   map.view(x1, z1, x2, z2, y, marks, zoom)
 --                                 rows (list of strings, north = first row, west = first column), legend text,
---                                 area {x1, z1, x2, z2}; max map.MAXW x map.MAXH (cut from x1/z1);
---                                 y = nil: surface view; marks = { {x=, z=, ch="D"}, ... } drawn on top
+--                                 area {x1, z1, x2, z2, y, zoom, w, h, scale, ylo, yhi}; max map.MAXW x map.MAXH
+--                                 characters (cut from x1/z1); y = nil: surface view;
+--                                 marks = { {x=, z=, ch="D"}, ... } drawn on top; zoom = blocks per char
+--                                 (1, 2, 4, 8, 16; others -> nearest): each char shows the most important
+--                                 block of its zoom x zoom columns (see M.grid), the legend says the scale
+--   map.grid(x1, z1, x2, z2, y, zoom)  the cached cell grid behind view() (chars, names, protected cells)
+--   map.zoom(z), map.scale(z)     normalized zoom; "1 char = 4x4 blocks"
+--   map.rev                       goes up on every map or protected-area change
 --   map.find(pattern, near, limit)
 --                                 { {x, y, z, name, d}, ... } blocks whose name contains pattern (plain text,
 --                                 any case), nearest to near = {x, y, z} first; limit default 20, max 100
@@ -246,6 +252,7 @@ function M.protect(box)
   if b.name == "" then b.name = "area" end
   prot.boxes[#prot.boxes + 1] = b
   prot.rev = prot.rev + 1
+  M.rev = M.rev + 1
   saveProt()
   return #prot.boxes
 end
@@ -254,6 +261,7 @@ function M.unprotect(i)
   if not prot.boxes[i] then return false end
   table.remove(prot.boxes, i)
   prot.rev = prot.rev + 1
+  M.rev = M.rev + 1
   saveProt()
   return true
 end
@@ -306,6 +314,7 @@ function M.add(obs)
       end
     end
   end
+  if stored > 0 then M.rev = M.rev + 1 end
   return stored, dropped
 end
 
@@ -347,32 +356,163 @@ function M.legend()
   return table.concat(parts, ", ")
 end
 
-function M.view(x1, z1, x2, z2, y, marks)
+---------------------------------------------------------------- views (any zoom)
+-- zoom = blocks per character. Each character shows the most important thing among its zoom x zoom columns
+-- (surface: the highest known block of each column; layer: the block at that y):
+--   P protected > D drone > H home > = building > o ore > ^ lava > ~ water > T trees > # stone > : dirt
+--   > , plants > . air > ? unknown        (so any known block beats unknown)
+M.ZOOMS = { 1, 2, 4, 8, 16 }
+local RANK = { ["?"] = 1, ["."] = 2, [","] = 3, [":"] = 4, ["#"] = 5, ["T"] = 6, ["~"] = 7, ["^"] = 8, ["o"] = 9,
+               ["="] = 10, ["H"] = 11, ["D"] = 12, ["P"] = 13 }
+M.RANK = RANK
+
+-- nearest of 1, 2, 4, 8, 16 (ties go to the smaller one); anything that is not a number is 1
+function M.zoom(z)
+  z = tonumber(z)
+  if not z or z ~= z then return 1 end
+  local best = 1
+  for _, v in ipairs(M.ZOOMS) do
+    if math.abs(v - z) < math.abs(best - z) then best = v end
+  end
+  return best
+end
+
+function M.scale(zoom)
+  zoom = M.zoom(zoom)
+  return zoom == 1 and "1 char = 1 block" or ("1 char = %dx%d blocks"):format(zoom, zoom)
+end
+
+local function protOverlay(g)                   -- g.prot[i] = true where any column of cell i is protected
+  local W, H, zoom, y = g.w, g.h, g.zoom, g.y
+  for _, b in ipairs(prot.boxes) do
+    if b.x2 >= g.x1 and b.x1 <= g.x2 and b.z2 >= g.z1 and b.z1 <= g.z2 and (y == nil or (y >= b.y1 and y <= b.y2)) then
+      local c1 = math.floor((math.max(b.x1, g.x1) - g.x1) / zoom)
+      local c2 = math.min(W - 1, math.floor((math.min(b.x2, g.x2) - g.x1) / zoom))
+      local r1 = math.floor((math.max(b.z1, g.z1) - g.z1) / zoom)
+      local r2 = math.min(H - 1, math.floor((math.min(b.z2, g.z2) - g.z1) / zoom))
+      for r = r1, r2 do
+        for c = c1, c2 do g.prot[r * W + c + 1] = true end
+      end
+    end
+  end
+end
+
+-- the aggregated grid behind view(): { w, h (characters), x1, z1, x2, z2 (blocks), y, zoom,
+--   ch = {[i] = char}, name = {[i] = block name}, by = {[i] = y of that block}, prot = {[i] = true},
+--   ylo, yhi (surface y range of the known columns, surface view only) }, i = row * w + col + 1 (0-based row/col).
+-- The area is cut to MAXW x MAXH characters. Exact (every known column counts, no sampling): it walks the
+-- known columns of each chunk once, so the cost is bounded by the known columns in the area (at most 614400
+-- at zoom 16, in practice the blocks the drones have seen) and never reads a chunk file it has no index entry for.
+-- The last grid is cached until the map or the protected areas change (M.rev / protect rev): don't modify it.
+M.rev = 0
+local lastGrid, lastKey
+function M.grid(x1, z1, x2, z2, y, zoom)
+  zoom = M.zoom(zoom)
   x1, z1 = math.floor(tonumber(x1) or 0), math.floor(tonumber(z1) or 0)
   x2, z2 = math.floor(tonumber(x2) or x1), math.floor(tonumber(z2) or z1)
   if x2 < x1 then x1, x2 = x2, x1 end
   if z2 < z1 then z1, z2 = z2, z1 end
-  x2, z2 = math.min(x2, x1 + M.MAXW - 1), math.min(z2, z1 + M.MAXH - 1)
+  x2, z2 = math.min(x2, x1 + M.MAXW * zoom - 1), math.min(z2, z1 + M.MAXH * zoom - 1)
   y = tonumber(y) and math.floor(tonumber(y)) or nil
-  local over = {}
+  local key = table.concat({ x1, z1, x2, z2, y or "s", zoom, M.rev, prot.rev, #prot.boxes }, ",")
+  if lastKey == key then return lastGrid end
+  local W, H = math.floor((x2 - x1) / zoom) + 1, math.floor((z2 - z1) / zoom) + 1
+  local rank, names, ys = {}, {}, {}
+  for i = 1, W * H do rank[i] = 0 end
+  local ylo, yhi
+  local cellX, cellZ = {}, {}
+  for cx = math.floor(x1 / 16), math.floor(x2 / 16) do
+    for cz = math.floor(z1 / 16), math.floor(z2 / 16) do
+      local key2 = keyOf(cx, cz)
+      local c = chunks[key2] or (index[key2] and chunk(cx, cz, false))
+      if c and next(c.known) then
+        local bx, bz = cx * 16, cz * 16
+        for l = 0, 15 do                        -- local column -> cell offset (false: outside the area)
+          local x, z = bx + l, bz + l
+          cellX[l] = x >= x1 and x <= x2 and math.floor((x - x1) / zoom) + 1 or false
+          cellZ[l] = z >= z1 and z <= z2 and math.floor((z - z1) / zoom) * W or false
+        end
+        local b, top = c.b, c.top
+        for col in pairs(c.known) do
+          local lx = col % 16
+          local lz = (col - lx) / 16
+          local ox, oz = cellX[lx], cellZ[lz]
+          if ox and oz then
+            local i = oz + ox
+            local best = rank[i]
+            if best < 10 then                   -- a building already wins over any block
+              local name, ny
+              if y then
+                ny = y
+                name = b[((y - YMIN) * 16 + lz) * 16 + lx]
+              else
+                ny = top[col]
+                if ny then
+                  name = b[((ny - YMIN) * 16 + lz) * 16 + lx]
+                  if not ylo or ny < ylo then ylo = ny end
+                  if not yhi or ny > yhi then yhi = ny end
+                else
+                  name = "air"
+                end
+              end
+              local r = name and RANK[cats[name] or M.category(name)] or 1
+              if r > best then rank[i], names[i], ys[i] = r, name, ny end
+            elseif not y then
+              local ny = top[col]
+              if ny then
+                if not ylo or ny < ylo then ylo = ny end
+                if not yhi or ny > yhi then yhi = ny end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  local CH = {}
+  for ch, r in pairs(RANK) do CH[r] = ch end
+  CH[0] = "?"
+  local chars = {}
+  for i = 1, W * H do chars[i] = CH[rank[i]] end
+  local g = { w = W, h = H, x1 = x1, z1 = z1, x2 = x2, z2 = z2, y = y, zoom = zoom, ch = chars, name = names,
+              by = ys, prot = {}, ylo = ylo, yhi = yhi }
+  if #prot.boxes > 0 then protOverlay(g) end
+  lastGrid, lastKey = g, key
+  return g
+end
+
+-- rows (north first, west first), legend, area {x1, z1, x2, z2 (blocks), y, zoom, w, h (characters), scale, ylo, yhi}
+-- zoom 1: marks are drawn on top of everything (as always); zoom > 1: by priority (protected beats a drone)
+function M.view(x1, z1, x2, z2, y, marks, zoom)
+  local g = M.grid(x1, z1, x2, z2, y, zoom)
+  zoom = g.zoom
+  local W = g.w
+  local cell = {}
+  for i = 1, W * g.h do
+    local ch = g.ch[i]
+    if g.prot[i] then ch = "P" end
+    cell[i] = ch
+  end
   for _, m in ipairs(type(marks) == "table" and marks or {}) do
     local mx, mz = tonumber(m.x), tonumber(m.z)
-    if mx and mz then over[math.floor(mx) .. "," .. math.floor(mz)] = tostring(m.ch or "D"):sub(1, 1) end
+    if mx and mz then
+      mx, mz = math.floor(mx), math.floor(mz)
+      if mx >= g.x1 and mx <= g.x2 and mz >= g.z1 and mz <= g.z2 then
+        local i = math.floor((mz - g.z1) / zoom) * W + math.floor((mx - g.x1) / zoom) + 1
+        local ch = tostring(m.ch or "D"):sub(1, 1)
+        if zoom == 1 or (RANK[ch] or 11) > (RANK[cell[i]] or 0) then cell[i] = ch end
+      end
+    end
   end
   local rows = {}
-  for z = z1, z2 do
-    local row = {}
-    for x = x1, x2 do
-      local ch = over[x .. "," .. z]
-      if not ch then
-        ch = M.cell(x, z, y)
-        if #prot.boxes > 0 and M.isProtected(x, y, z) then ch = "P" end
-      end
-      row[#row + 1] = ch
-    end
-    rows[#rows + 1] = table.concat(row)
+  for r = 0, g.h - 1 do rows[r + 1] = table.concat(cell, "", r * W + 1, r * W + W) end
+  local legend = M.legend()
+  if zoom > 1 then
+    legend = legend .. "; " .. M.scale(zoom) .. ", each char shows the most important block in it"
+      .. " (P > D > H > = > o > ^ > ~ > T > # > : > , > . > ?)"
   end
-  return rows, M.legend(), { x1 = x1, z1 = z1, x2 = x2, z2 = z2, y = y }
+  return rows, legend, { x1 = g.x1, z1 = g.z1, x2 = g.x2, z2 = g.z2, y = g.y, zoom = zoom, w = W, h = g.h,
+                         scale = M.scale(zoom), ylo = g.ylo, yhi = g.yhi }
 end
 
 function M.find(pattern, near, limit)

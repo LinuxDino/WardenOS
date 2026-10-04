@@ -11,15 +11,27 @@ return {
     local zones, msg = {}, ""
     local cx, cz = 0, 0                           -- block at the center of the view
     local layer                                   -- nil = surface view, else the y shown
+    local zoom = 1                                -- blocks per character: 1, 2, 4, 8, 16
     local view = "map"                            -- map | areas
-    local tapped                                  -- { x, y, z, name } of the last tapped block
-    local prot                                    -- protect flow: { step = 1 | 2 | "name", a = {x, z}, b = {x, z} }
+    local tapped                                  -- { x, z, x2, z2, y, name } the last tapped cell (block range)
+    local prot                                    -- protect flow: { step = 1 | 2 | "name", a = cell, b = cell }
+                                                  -- (cell = { x, z, x2, z2 }: the block range of a tapped cell)
     local input = ""
     local target = 0                              -- index into the center targets
     local delAsk                                  -- area index waiting for a second "sure?" tap
     local areaScroll = 0
     local heard = {}                              -- statuses heard by this app (when there is no kernel cache)
     local grid = { x = 1, y = 2, w = 1, h = 1, left = 0, top = 0 }
+
+    local function setZoom(z)                     -- the block at the center stays at the center
+      z = map.zoom(z)
+      if z ~= zoom then zoom, msg = z, "zoom: " .. map.scale(z) end
+    end
+    local function zoomIn() setZoom(math.max(1, zoom / 2)) end
+    local function zoomOut() setZoom(math.min(16, zoom * 2)) end
+    local function steps()                        -- pan steps in blocks: a part of the screen, scaled by zoom
+      return math.max(4, math.floor(grid.w / 4)) * zoom, math.max(2, math.floor(grid.h / 3)) * zoom
+    end
 
     ------------------------------------------------ drones
     local function drones()
@@ -110,8 +122,11 @@ return {
     local function saveArea()
       local name, y1, y2 = input:match("^%s*(.-)%s+(%-?%d+)%s+(%-?%d+)%s*$")
       if not name then name = input:match("^%s*(.-)%s*$") end
-      local i, err = map.protect({ name = name ~= "" and name or "area", x1 = prot.a.x, z1 = prot.a.z,
-                                   x2 = prot.b.x, z2 = prot.b.z, y1 = tonumber(y1), y2 = tonumber(y2) })
+      local a, b = prot.a, prot.b                 -- the two corner cells: the box covers both completely
+      local i, err = map.protect({ name = name ~= "" and name or "area",
+                                   x1 = math.min(a.x, b.x), z1 = math.min(a.z, b.z),
+                                   x2 = math.max(a.x2, b.x2), z2 = math.max(a.z2, b.z2),
+                                   y1 = tonumber(y1), y2 = tonumber(y2) })
       msg = i and ("protected: " .. map.protected().boxes[i].name) or ("not saved: " .. tostring(err))
       prot, input = nil, ""
     end
@@ -123,67 +138,97 @@ return {
       term.clearLine()
       put(2, 1, "Map", T.accent, T.panel)
       local mode = layer and ("y=" .. layer) or "surface"
-      local right = w - (layer and 14 or 7) + 1     -- " - " " + " " Surf " or " Layer "
-      put(6, 1, (mode .. "  " .. cx .. "," .. cz):sub(1, math.max(0, right - 7)), T.dim, T.panel)
+      local right = w - (layer and 24 or 15) + 1    -- [" y- " " y+ "] " - " " + " " Surf " | " Layer "
+      put(6, 1, (mode .. " x" .. zoom .. " " .. cx .. "," .. cz):sub(1, math.max(0, right - 7)), T.dim, T.panel)
       local x = right
       if layer then
-        x = button(x, 1, "-", function() layer = math.max(map.YMIN, layer - 1) end, T.text, T.panel)
-        x = button(x, 1, "+", function() layer = math.min(map.YMAX, layer + 1) end, T.text, T.panel)
+        x = button(x, 1, "y-", function() layer = math.max(map.YMIN, layer - 1) end, T.text, T.panel)
+        x = button(x, 1, "y+", function() layer = math.min(map.YMAX, layer + 1) end, T.text, T.panel)
       end
+      x = button(x, 1, "-", zoomOut, T.text, T.panel)
+      x = button(x, 1, "+", zoomIn, T.text, T.panel)
       button(x, 1, layer and "Surf" or "Layer", function()
         if layer then layer = nil
         else layer = (tapped and tapped.y) or map.surface(cx, cz) or 64 end
       end, T.accent, T.panel)
 
-      -- the grid: one cell per block, north at the top
+      -- the grid: one cell per zoom x zoom blocks, north at the top; cells sit on multiples of zoom
       local gw, gh = w, math.max(1, h - 4)
-      local left, top = cx - math.floor(gw / 2), cz - math.floor(gh / 2)
-      grid = { x = 1, y = 2, w = gw, h = gh, left = left, top = top }
+      local left = (math.floor(cx / zoom) - math.floor(gw / 2)) * zoom
+      local top = (math.floor(cz / zoom) - math.floor(gh / 2)) * zoom
+      grid = { x = 1, y = 2, w = gw, h = gh, left = left, top = top, zoom = zoom }
+      -- map.grid caches its result until the map or the protected areas change: redraws and timer ticks
+      -- with the same view reuse it
+      local g = map.grid(left, top, left + gw * zoom - 1, top + gh * zoom - 1, layer, zoom)
       local mk = marks()
+      local mcell = {}                            -- marks by cell (a drone wins over its home)
+      for k, m in pairs(mk) do
+        local mx, mz = k:match("^(%-?%d+),(%-?%d+)$")
+        local c, r = math.floor((tonumber(mx) - left) / zoom), math.floor((tonumber(mz) - top) / zoom)
+        if c >= 0 and c < gw and r >= 0 and r < gh then
+          local i = r * gw + c + 1
+          if mcell[i] ~= "D" then mcell[i] = m end
+        end
+      end
+      local function inCell(p, bx, bz)            -- does block range p overlap the cell at bx, bz?
+        return p and p.x <= bx + zoom - 1 and (p.x2 or p.x) >= bx and p.z <= bz + zoom - 1 and (p.z2 or p.z) >= bz
+      end
       local COLOR = palette()
       local fgOf, bgOf = HEX[T.text] or "0", HEX[T.bg] or "f"
       for r = 1, gh do
-        local z = top + r - 1
+        local z = top + (r - 1) * zoom
         local text, fg, bg = {}, {}, {}
         for c = 1, gw do
-          local bx = left + c - 1
-          local ch = map.cell(bx, z, layer)
+          local bx = left + (c - 1) * zoom
+          local i = (r - 1) * g.w + c
+          local ch = g.ch[i] or "?"
           local f, b = COLOR[ch] or T.text, T.bg
-          local m = mk[bx .. "," .. z]
+          local m = mcell[(r - 1) * gw + c]
           if m then
             ch, f, b = m, T.bg, m == "D" and T.accent or T.warn
           else
-            if map.isProtected(bx, layer, z) then b = colors.purple end
+            if g.prot[i] then b = colors.purple end
             if ch == "?" then ch = " " end
           end
-          if prot and prot.a and prot.a.x == bx and prot.a.z == z then b = T.accent end
-          if tapped and tapped.x == bx and tapped.z == z and not m then b = T.accent f = T.bg end
+          if prot and inCell(prot.a, bx, z) then b = T.accent end
+          if tapped and inCell(tapped, bx, z) and not m then b = T.accent f = T.bg end
           text[c], fg[c], bg[c] = ch, HEX[f] or fgOf, HEX[b] or bgOf
         end
         term.setCursorPos(1, 1 + r)
         term.blit(table.concat(text), table.concat(fg), table.concat(bg))
       end
-      local function tapAt(px, py)                -- screen cell -> block
-        local bx, bz = left + px - 1, top + (py - 1) - 1
+      local function short(n) return n and (n:match("^minecraft:(.*)$") or n) or "unknown" end
+      local function tapAt(px, py)                -- screen cell -> its block range
+        local c, r = px - 1, py - 2
+        local bx, bz = left + c * zoom, top + r * zoom
+        local cell = { x = bx, z = bz, x2 = bx + zoom - 1, z2 = bz + zoom - 1 }
         if prot and (prot.step == 1 or prot.step == 2) then
+          local where = zoom == 1 and ("%d %d"):format(bx, bz)
+            or ("%d..%d %d..%d"):format(cell.x, cell.x2, cell.z, cell.z2)
           if prot.step == 1 then
-            prot.a, prot.step = { x = bx, z = bz }, 2
-            msg = ("corner 1: %d %d - tap the other corner"):format(bx, bz)
+            prot.a, prot.step = cell, 2
+            msg = "corner 1: " .. where .. " - tap the other corner"
           else
-            prot.b, prot.step, input = { x = bx, z = bz }, "name", ""
+            prot.b, prot.step, input = cell, "name", ""
             msg = ""
           end
           return
         end
-        local ch, name, y = map.cell(bx, bz, layer)
-        tapped = { x = bx, z = bz, y = y, name = name }
-        local d = drones()
+        local i = r * g.w + c + 1
+        local ch, name, y = g.ch[i] or "?", g.name[i], g.by[i]
+        cell.y, cell.name = y, name
+        tapped = cell
         local who = ""
-        for id, s in pairs(d) do
-          if s.calibrated and type(s.abs) == "table" and math.floor(tonumber(s.abs.x) or 1e9) == bx
-             and math.floor(tonumber(s.abs.z) or 1e9) == bz then who = " drone #" .. id end
+        for id, s in pairs(drones()) do
+          local dx, dz = math.floor(tonumber(s.calibrated and type(s.abs) == "table" and s.abs.x) or 1e9),
+                         math.floor(tonumber(s.calibrated and type(s.abs) == "table" and s.abs.z) or 1e9)
+          if dx >= cell.x and dx <= cell.x2 and dz >= cell.z and dz <= cell.z2 then who = " drone #" .. id end
         end
-        local p = map.isProtected(bx, y, bz)
+        local p
+        for _, b in ipairs(map.protected().boxes) do
+          if b.x1 <= cell.x2 and b.x2 >= cell.x and b.z1 <= cell.z2 and b.z2 >= cell.z
+             and (layer == nil or (layer >= b.y1 and layer <= b.y2)) then p = b break end
+        end
         msg = (p and ("protected: " .. p.name) or "") .. who
         if ch == "?" and who == "" then msg = (msg ~= "" and msg .. " " or "") .. "(not seen yet)" end
       end
@@ -198,6 +243,10 @@ return {
         if #s > w - 1 then s = s:sub(-(w - 1)) end
         put(1, iy, s, T.text, T.panel)
         put(#s + 1, iy, string.rep(" ", math.max(0, w - #s)), T.text, T.panel)
+      elseif tapped and tapped.x2 > tapped.x then  -- a cell of several blocks: its range + the block shown
+        local s = ("x%d..%d z%d..%d y%s %s"):format(tapped.x, tapped.x2, tapped.z, tapped.z2,
+                                                     tapped.y and tostring(tapped.y) or "?", short(tapped.name))
+        put(1, iy, s:sub(1, w), T.text)
       elseif tapped then
         local s = ("%d %s %d  %s"):format(tapped.x, tapped.y and tostring(tapped.y) or "?", tapped.z,
                                            tapped.name or "unknown")
@@ -205,8 +254,7 @@ return {
       else
         put(1, iy, ("%d blocks known%s"):format(map.count(), map.full and " - map FULL" or ""):sub(1, w), T.dim)
       end
-      local step = math.max(4, math.floor(gw / 4))
-      local zstep = math.max(2, math.floor(gh / 3))
+      local step, zstep = steps()
       if prot then
         local items = {}
         if prot.step == "name" then items[1] = { "Save", saveArea, fg = T.bg, bg = T.accent } end
@@ -317,20 +365,26 @@ return {
         render()
       elseif e == "mouse_scroll" then
         if view == "areas" then areaScroll = areaScroll + a
-        else cz = cz + a * math.max(2, math.floor(grid.h / 3)) end
+        else cz = cz + a * select(2, steps()) end
         render()
       elseif e == "char" or e == "paste" then
-        if prot and prot.step == "name" then input = (input .. a):sub(1, 40) render() end
+        if prot and prot.step == "name" then input = (input .. a):sub(1, 40) render()
+        elseif e == "char" and view == "map" and (a == "+" or a == "=" or a == "-") then
+          if a == "-" then zoomOut() else zoomIn() end
+          render()
+        end
       elseif e == "key" then
         if prot and prot.step == "name" then
           if a == keys.backspace then input = input:sub(1, -2)
           elseif a == keys.enter then saveArea() end
         elseif view == "map" then
-          local step, zstep = math.max(4, math.floor(grid.w / 4)), math.max(2, math.floor(grid.h / 3))
+          local step, zstep = steps()
           if a == keys.left then cx = cx - step
           elseif a == keys.right then cx = cx + step
           elseif a == keys.up then cz = cz - zstep
-          elseif a == keys.down then cz = cz + zstep end
+          elseif a == keys.down then cz = cz + zstep
+          elseif a == keys.pageUp then zoomIn()
+          elseif a == keys.pageDown then zoomOut() end
         end
         render()
       elseif e == "theme_changed" or e == "term_resize" then
