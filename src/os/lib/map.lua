@@ -29,8 +29,9 @@
 -- Storage: /os/map/<cx>_<cz> per 16x16 column chunk (cx = floor(x / 16)), /os/map/index (blocks per chunk),
 -- /os/map/protect. A chunk file is "WMAP1" then one line per block name: "<name>\t<positions>", each position
 -- 3 characters (base 64 of ((y + 64) * 16 + z % 16) * 16 + x % 16). About 3 bytes per block on disk,
--- so the default cap of 120000 blocks is ~360 KB (+ 500 bytes minimum per file in CC: Tweaked).
--- New blocks are also refused when the disk has less than 96 KB free (computers have 1 MB by default).
+-- The cap follows the computer's disk size: about 60% of it for the map, between 120000 blocks (1 MB disk,
+-- the CC: Tweaked default) and 400000 (find/info walk every block in memory, so more gets slow).
+-- New blocks are also refused when the disk has less than 96 KB free.
 -- Blocks already known are always updated, and "air" is stored too (it matters for paths).
 local VERSION = 1
 local shared = rawget(_G, "WardenMap")
@@ -44,6 +45,12 @@ local MAX_BOXES = 64
 
 local M = { VERSION = VERSION, DIR = DIR, YMIN = YMIN, YMAX = YMAX, CAP = 120000, MAXW = 60, MAXH = 40 }
 M.full = false
+do                                              -- cap from the disk size (servers can raise the 1 MB default)
+  local ok, cap = pcall(fs.getCapacity, "/")
+  if ok and type(cap) == "number" and cap > 0 then
+    M.CAP = math.max(120000, math.min(400000, math.floor(cap * 0.6 / 3.5)))
+  end
+end
 
 ---------------------------------------------------------------- categories
 M.LEGEND = {
