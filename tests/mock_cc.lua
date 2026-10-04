@@ -118,6 +118,16 @@ function peripheral.call(n, method, ...)
   if n == "left" and method == "list" then return {} end
   error("No such method " .. tostring(method))
 end
+-- redstone: inputs per side come from M.redstone (set by a test), e.g. M.redstone.back = 15
+M.redstone = {}
+redstone = {
+  getSides = function() return { "top", "bottom", "left", "right", "front", "back" } end,
+  getInput = function(side) return (M.redstone[side] or 0) > 0 end,
+  getAnalogInput = function(side) return M.redstone[side] or 0 end,
+  getAnalogueInput = function(side) return M.redstone[side] or 0 end,
+  setOutput = function() end,
+  setAnalogOutput = function() end,
+}
 disk = {
   isPresent = function(n) return DRIVE and n == "bottom" end,
   hasData = function(n) return DRIVE and n == "bottom" end,

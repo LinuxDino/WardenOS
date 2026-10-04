@@ -97,7 +97,7 @@ return {
       n = tonumber(n)
       if not n then return "-" end
       if math.abs(n) >= 1e6 then return ("%.1fM"):format(n / 1e6) end
-      if math.abs(n) >= 1e4 then return ("%.1fk"):format(n / 1e3) end
+      if math.abs(n) >= 1e3 then return ("%.1fk"):format(n / 1e3) end
       return tostring(math.floor(n))
     end
     local function kb(n) return math.floor((n or 0) / 1024 + 0.5) .. " KB" end
@@ -285,7 +285,7 @@ return {
     end
 
     local function fuelStr(d)
-      local f = d.fuel == "unlimited" and "inf" or (type(d.fuel) == "number" and num(d.fuel) or "?")
+      local f = d.fuel == "unlimited" and "inf" or (type(d.fuel) == "number" and tostring(math.floor(d.fuel)) or "?")
       if d.fuelItems then f = f .. "+" .. tostring(d.fuelItems) .. "c" end
       return f
     end
@@ -362,18 +362,19 @@ return {
         if r.first then
           fill(1, ry, W - 1, 1, T.panel)
           put(1, ry, wn.offline and "-" or "*", wn.offline and T.bad or T.good, T.panel)
-          put(2, ry, pad(("#%s %s"):format(tostring(id), tostring(d.label or "")), 14), T.text, T.panel)
-          put(16, ry, pad(tostring(d.task or "?") .. "/" .. tostring(d.state or "?"), 14), T.text, T.panel)
-          local fu = "fuel " .. fuelStr(d)
-          put(31, ry, pad(fu, W - 31 - 5), wn.lowFuel and T.bad or T.text, T.panel)
+          put(2, ry, pad(("#%s %s"):format(tostring(id), tostring(d.label or "")), 12), T.text, T.panel)
+          put(15, ry, pad(tostring(d.task or "?") .. "/" .. tostring(d.state or "?"), 12), T.text, T.panel)
+          local fu = "f:" .. fuelStr(d) .. (wn.lowFuel and "!" or "")
+          put(28, ry, pad(fu, W - 28 - 8), wn.lowFuel and T.bad or T.text, T.panel)
           local a = age(d.seen)
+          if wn.offline then a = "off " .. a end
           put(W - #a - 1, ry, a, wn.offline and T.bad or T.dim, T.panel)
         else
           local p = posStr(d)
           put(2, ry, pad(p, 14), p == "uncal." and T.dim or T.text)
-          local v = "v" .. tostring(d.version or "?")
+          local v = "v" .. tostring(d.version or "?") .. (wn.version and "!" or "")
           put(16, ry, pad(v, 8), wn.version and T.warn or T.dim)
-          local pr = "prot " .. tostring(d.protectRev or "-")
+          local pr = "prot " .. tostring(d.protectRev or "-") .. (wn.protect and "!" or "")
           put(25, ry, pad(pr, 8), wn.protect and T.warn or T.dim)
           if W >= 40 then
             local sd = d.safeDig == nil and "" or (d.safeDig and "safe" or "UNSAFE")
@@ -458,7 +459,7 @@ return {
       local items = {}
       for _, e in ipairs(logList("error")) do items[#items + 1] = { e = e, err = true } end
       for _, e in ipairs(logList("info")) do items[#items + 1] = { e = e } end
-      table.sort(items, function(a, b) return (a.e.clock or 0) > (b.e.clock or 0) end)
+      table.sort(items, function(a, b) return (a.e.seq or 0) > (b.e.seq or 0) end)
       local rows = {}                               -- wrap long lines
       local tw = math.max(10, W - 7)
       for _, it in ipairs(items) do

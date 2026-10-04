@@ -17,6 +17,7 @@ local counts, total = {}, 0                       -- event name -> { n, buckets 
 local MAXNAMES = 64
 local SLOT = 10                                   -- seconds per rate bucket, 6 buckets = 1 minute
 local allBuckets, kindBuckets = {}, {}
+local seq = 0
 
 local function now() return os.clock() end
 local function epoch()
@@ -125,6 +126,8 @@ function L.add(kind, entry)
     if type(entry) ~= "table" then entry = { text = cut(entry, 200) } end
     entry.time = entry.time or epoch()
     entry.clock = entry.clock or now()
+    seq = seq + 1
+    entry.seq = seq                               -- order across kinds
     local r = rings[kind]
     if not r then r = { n = 0 } rings[kind] = r end
     r.n = r.n + 1
