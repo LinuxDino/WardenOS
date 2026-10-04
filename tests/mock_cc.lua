@@ -111,6 +111,13 @@ peripheral = {
   find = function(t) if t == "monitor" then return mon end end,
   getMethods = function(n) if n == "left" then return { "getStress", "getStressCapacity", "list" } end end,
 }
+function peripheral.isPresent(n) return peripheral.getType(n) ~= nil end
+function peripheral.call(n, method, ...)
+  if n == "left" and method == "getStress" then return 128 end
+  if n == "left" and method == "getStressCapacity" then return 2048 end
+  if n == "left" and method == "list" then return {} end
+  error("No such method " .. tostring(method))
+end
 disk = {
   isPresent = function(n) return DRIVE and n == "bottom" end,
   hasData = function(n) return DRIVE and n == "bottom" end,
@@ -248,6 +255,7 @@ function fs.copy(a, b)
   fs.makeDir(fs.getDir(b))
   FS[b] = FS[a]
 end
+function fs.isReadOnly(p) p = norm(p) return p == "/rom" or p:sub(1, 5) == "/rom/" end
 function fs.getDrive(p) p = norm(p) if p:sub(1, 4) == "/rom" then return "rom" end return "hdd" end
 function fs.getSize(p) local v = FS[norm(p)] return type(v) == "string" and #v or 0 end
 function fs.getFreeSpace() return 900000 end
@@ -296,6 +304,38 @@ http = { get = function(url)
   return { getResponseCode = function() return 200 end, readAll = function() return body end, close = function() end }
 end }
 
+-- http.request (async, like CC: Tweaked): every request is recorded in M.requests and answered by the test's
+-- HOST_API(body, headers) -> status, responseBody[, retryAfter]; the reply arrives as http_success / http_failure.
+-- status 0 = connection failure (http_failure without a handle).
+M.requests = {}
+function http.request(url, body, headers, binary)
+  local req = type(url) == "table" and url or { url = url, body = body, headers = headers, binary = binary }
+  M.requests[#M.requests + 1] = { url = req.url, headers = req.headers or {}, body = req.body,
+                                  method = req.method or (req.body and "POST" or "GET"), timeout = req.timeout,
+                                  binary = req.binary }
+  if not HOST_API then os.queueEvent("http_failure", req.url, "Could not connect") return false, "Could not connect" end
+  local code, text, after = HOST_API(req.body, req.headers or {})
+  code, text = tonumber(code) or 0, text and tostring(text) or ""
+  local function handle(hdrs)
+    local done = false
+    return {
+      readAll = function() if done then return nil end done = true return text end,
+      close = function() end,
+      getResponseCode = function() return code end,
+      getResponseHeaders = function() return hdrs end,
+    }
+  end
+  if code >= 200 and code < 300 then
+    os.queueEvent("http_success", req.url, handle({ ["Content-Type"] = "application/json" }))
+  elseif code == 0 then
+    os.queueEvent("http_failure", req.url, "Could not connect")
+  else
+    os.queueEvent("http_failure", req.url, "HTTP error message",
+                  handle({ ["Retry-After"] = after and tostring(after) or nil }))
+  end
+  return true
+end
+
 ---------------------------------------------------------------- os / events
 local timerId, queue = 0, {}
 os.epoch = function() return 123456 end
@@ -307,7 +347,7 @@ os.time = function() return 12.5 end
 os.version = function() return "CraftOS 1.9" end
 os.reboot = function() M.rebooted = true error("REBOOT", 0) end
 os.shutdown = function() M.rebooted = true error("SHUTDOWN", 0) end
-os.startTimer = function() timerId = timerId + 1 return timerId end
+os.startTimer = function() timerId = timerId + 1 M.lastTimer = timerId return timerId end
 os.queueEvent = function(...) queue[#queue + 1] = table.pack(...) end
 local EV, LINES = SCRIPT_EVENTS, SCRIPT_LINES
 os.pullEventRaw = function(filter)
@@ -318,9 +358,11 @@ os.pullEventRaw = function(filter)
     if not e then
       e = table.remove(EV, 1)
       if not e then error("SCRIPT_END", 0) end
-      e = table.pack(unpack(e))
+      -- {"host", ...}: the test's HOST_EVENT(...) builds the event at this moment (nil = skip it)
+      if e[1] == "host" and HOST_EVENT then e = HOST_EVENT(unpack(e, 2)) end
+      e = e and table.pack(unpack(e))
     end
-    if not filter or e[1] == filter or e[1] == "terminate" then return unpack(e, 1, e.n) end
+    if e and (not filter or e[1] == filter or e[1] == "terminate") then return unpack(e, 1, e.n) end
   end
 end
 os.pullEvent = function(filter)
