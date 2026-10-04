@@ -12,6 +12,7 @@ return {
     "os/lib/claude.lua",
     "os/lib/json.lua",
     "os/lib/login.lua",
+    "os/lib/pocketserver.lua",
     "os/lib/screen.lua",
     "os/lib/settings.lua",
     "os/lib/sha256.lua",
@@ -29,10 +30,22 @@ return {
     "os/drone/disk.lua",
     "os/drone/diskstartup.lua",
     "os/drone/startup.lua",
+    "os/pocket/claudecore.lua",
+    "os/pocket/main.lua",
+    "os/pocket/startup.lua",
   },
   -- what a turtle gets (os/drone/startup.lua becomes /startup.lua)
   drone = {
     "os/drone/agent.lua",
     "os/drone/startup.lua",
+  },
+  -- what an Advanced Pocket Computer gets (os/pocket/startup.lua becomes /startup.lua)
+  pocket = {
+    "os/config.lua",
+    "os/lib/claude.lua",
+    "os/lib/json.lua",
+    "os/pocket/claudecore.lua",
+    "os/pocket/main.lua",
+    "os/pocket/startup.lua",
   },
 }

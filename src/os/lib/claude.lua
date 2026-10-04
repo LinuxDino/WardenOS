@@ -105,13 +105,27 @@ local function post(key, payload)
   end
 end
 
+-- Replies are matched by URL only, so requests from different conversations on this computer
+-- (desktop app, pocket relay) must take turns. A request abandoned by a closed window is
+-- considered gone after its timeout.
+local function postOne(key, payload)
+  local L = rawget(_G, "WardenClaudeHttp")
+  if not L then L = {} rawset(_G, "WardenClaudeHttp", L) end
+  while L.busy and os.clock() - L.since < 310 do sleep(0.25) end
+  L.busy, L.since = true, os.clock()
+  local ok, a, b, c, d = pcall(post, key, payload)
+  L.busy = false
+  if not ok then error(a, 0) end
+  return a, b, c, d
+end
+
 -- Messages API call with up to 2 retries for 429 / 5xx / network errors.
 -- body is a Lua table (use json.array / json.object where the JSON type matters).
 function M.send(key, body, onRetry)
   local payload = json.encode(body)
   local res, msg, retry, after
   for attempt = 1, 3 do
-    res, msg, retry, after = post(key, payload)
+    res, msg, retry, after = postOne(key, payload)
     if res or not retry or attempt == 3 then break end
     local wait = math.min(after or (2 ^ attempt), 20)
     if onRetry then onRetry(msg, wait) end

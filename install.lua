@@ -7,6 +7,7 @@
 --   install update -y  update without asking (used by Settings > Update now)
 --
 -- On a turtle it installs the WardenOS drone agent instead (no erase, no desktop).
+-- On an Advanced Pocket Computer it installs WardenOS Pocket (no erase, no desktop).
 
 local REPO, BRANCH = "LinuxDino/WardenOS", "main"
 local TOS_VERSION, STEPS = "1.0", 5
@@ -28,6 +29,11 @@ if not http then
   return
 end
 local isTurtle = turtle ~= nil
+local isPocket = pocket ~= nil and not isTurtle
+if isPocket and not term.isColour() then
+  printError("WardenOS Pocket needs an Advanced Pocket Computer (gold).")
+  return
+end
 if not isTurtle and not term.isColour() then
   printError("WardenOS needs an Advanced Computer (gold).")
   print("Turtles can run the WardenOS drone agent: run this installer on a turtle.")
@@ -66,7 +72,7 @@ local function download()
   term.clear()
   term.setCursorPos(1, 1)
   term.setTextColor(colors.cyan)
-  print(isTurtle and "WardenOS drone installer" or "WardenOS installer")
+  print(isTurtle and "WardenOS drone installer" or (isPocket and "WardenOS Pocket installer" or "WardenOS installer"))
   term.setTextColor(colors.lightGray)
   print(REPO .. " @ " .. branch)
   print()
@@ -74,7 +80,7 @@ local function download()
   local fn, err = load(fetch("manifest.lua"), "=manifest.lua", "t", {})
   if not fn then error("broken manifest: " .. tostring(err), 0) end
   local ok, m = pcall(fn)
-  local list = ok and type(m) == "table" and (isTurtle and m.drone or m.files)
+  local list = ok and type(m) == "table" and (isTurtle and m.drone or (isPocket and m.pocket or m.files))
   if type(list) ~= "table" or #list == 0 then
     error("broken manifest", 0)
   end
@@ -152,7 +158,7 @@ if isTurtle then
       for _, p in ipairs({ "/os/users.dat", "/os/settings.lua", "/os/boot.cfg", "/os/files.dat" }) do
         if fs.exists(p) then fs.delete(p) end
       end
-      for _, d in ipairs({ "/os/apps", "/os/lib" }) do
+      for _, d in ipairs({ "/os/apps", "/os/lib", "/os/pocket" }) do
         if fs.isDir(d) and #fs.list(d) == 0 then fs.delete(d) end
       end
     elseif fs.exists("/startup.lua") and not fs.exists("/os/drone/agent.lua") and not fs.exists("/startup.old.lua") then
@@ -177,6 +183,62 @@ if isTurtle then
     os.reboot()
   end
   local ok, err = pcall(droneInstall)
+  if not ok then
+    if tostring(err):find("Terminated") then print("Cancelled.") else printError("Install failed: " .. tostring(err)) end
+  end
+  return
+end
+
+---------------------------------------------------------------- pocket computer: WardenOS Pocket
+if isPocket then
+  local function pocketInstall()
+    local hadDesktop = fs.exists("/os/kernel.lua")    -- an old installer put the full desktop on this pocket
+    if mode ~= "update" and not yes then
+      print()
+      if hadDesktop then
+        print("This pocket computer has the WardenOS desktop. It is replaced by WardenOS Pocket. Other files stay.")
+      else
+        print("This pocket computer gets WardenOS Pocket. Its startup.lua is replaced (the old one is kept as startup.old.lua). Other files stay.")
+      end
+      print()
+      write("Install? (y/n) ")
+      if read():lower() ~= "y" then
+        print("Cancelled. Nothing was changed.")
+        return
+      end
+    end
+    if hadDesktop then
+      -- remove only WardenOS desktop files (the pocket UI replaces them); pocket files are written below
+      for _, p in ipairs(MANIFEST.files) do
+        local path = "/" .. p
+        if path ~= "/startup.lua" and not FILES[path] and fs.exists(path) and not fs.isDir(path) then fs.delete(path) end
+      end
+      for _, p in ipairs({ "/os/users.dat", "/os/settings.lua", "/os/boot.cfg", "/os/files.dat" }) do
+        if fs.exists(p) then fs.delete(p) end
+      end
+      for _, d in ipairs({ "/os/apps", "/os/lib", "/os/drone" }) do
+        if fs.isDir(d) and #fs.list(d) == 0 then fs.delete(d) end
+      end
+    elseif fs.exists("/startup.lua") and not fs.exists("/os/pocket/main.lua") and not fs.exists("/startup.old.lua") then
+      fs.copy("/startup.lua", "/startup.old.lua")
+    end
+    local function put(path, data)
+      local dir = fs.getDir(path)
+      if dir ~= "" then fs.makeDir(dir) end
+      local f = assert(fs.open(path, "w"))
+      f.write(data)
+      f.close()
+    end
+    for path, data in pairs(FILES) do
+      put(path == "/os/pocket/startup.lua" and "/startup.lua" or path, data)
+    end
+    if fs.exists("/os/pocket/startup.lua") then fs.delete("/os/pocket/startup.lua") end   -- left by a desktop install
+    if not os.getComputerLabel() then os.setComputerLabel("pocket-" .. os.getComputerID()) end
+    print("WardenOS Pocket " .. OS_VERSION .. " installed. Rebooting...")
+    sleep(1)
+    os.reboot()
+  end
+  local ok, err = pcall(pocketInstall)
   if not ok then
     if tostring(err):find("Terminated") then print("Cancelled.") else printError("Install failed: " .. tostring(err)) end
   end

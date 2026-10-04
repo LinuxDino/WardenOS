@@ -140,6 +140,31 @@ local function text(t, x, y, s, fg, bg)
   t.write(s)
 end
 
+---------------------------------------------------------------- pocket server (WardenOS Pocket pairing + relay)
+-- a broken module must never break the desktop: every call is protected
+local psrv
+do
+  local ok, m = pcall(dofile, "/os/lib/pocketserver.lua")
+  if ok and type(m) == "table" then psrv = m end
+end
+local function pocketPrompt()                   -- { id } of a pocket waiting for "Allow", or nil
+  if not psrv then return nil end
+  local ok, p = pcall(psrv.prompt)
+  return ok and type(p) == "table" and p or nil
+end
+local function promptX() return W - math.min(W, 30) + 1 end
+local function drawPocketPrompt()               -- small card at the top right: rows 2-3
+  local p = pocketPrompt()
+  if not p then return end
+  local x, cw = promptX(), math.min(W, 30)
+  fill(out, x, 2, cw, 2, T.panel)
+  local msg = "Pocket #" .. tostring(p.id) .. " wants to connect"
+  if #msg > cw - 2 then msg = "Pocket #" .. tostring(p.id) .. ": connect?" end
+  text(out, x + 1, 2, msg:sub(1, cw - 2), T.warn, T.panel)
+  text(out, x + 1, 3, " Allow ", T.bg, T.good)
+  text(out, x + 9, 3, " Deny ", T.bg, T.bad)
+end
+
 local function clockStr()
   local t = os.time()
   local h = math.floor(t)
@@ -344,6 +369,7 @@ local function drawAll()
   drawDock()
   drawTop()
   if menuOpen then drawMenu() end
+  drawPocketPrompt()
   if top and not menuOpen and not appView then top.win.restoreCursor() end
 end
 
@@ -456,6 +482,12 @@ end
 
 ---------------------------------------------------------------- input
 local function onTouch(x, y)
+  if pocketPrompt() and (y == 2 or y == 3) and x >= promptX() then   -- the pairing card is on top
+    local px = promptX()
+    if y == 3 and x >= px + 1 and x <= px + 7 then pcall(psrv.decide, true)
+    elseif y == 3 and x >= px + 9 and x <= px + 14 then pcall(psrv.decide, false) end
+    return
+  end
   if menuOpen then
     menuOpen = false
     local items = menuItems()
@@ -557,6 +589,10 @@ while running do
   local ev = table.pack(os.pullEventRaw())
   local name = ev[1]
   local redraw = false
+  if psrv and name ~= "terminate" then                    -- pocket requests, relays, the pockets' Claude
+    local okp, changed = pcall(psrv.event, ev)
+    if okp and changed then redraw = true end
+  end
 
   if name == "monitor_touch" then
     if ev[2] == monSide then onTouch(ev[3], ev[4]) redraw = true end
@@ -623,7 +659,13 @@ while running do
   end
 
   if sweep() then redraw = true end
-  if redraw and running then drawAll() end
+  if redraw and running then
+    drawAll()
+  elseif running and pocketPrompt() then                   -- keep the card above window updates
+    drawPocketPrompt()
+    local t = topWin()
+    if t and not menuOpen and not appView then t.win.restoreCursor() end
+  end
 end
 
 ---------------------------------------------------------------- shutdown of the desktop

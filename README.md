@@ -66,6 +66,21 @@ writing whole tasks for a drone and watching them run. By default it asks before
 (**Allow / Always / Deny**); **options** switches model (Opus 5.5 / Sonnet 5.5), effort, or "run without asking".
 If replies time out, pick a lower effort in **options**, or ask the server owner to raise the HTTP timeout in the CC: Tweaked server config.
 
+## WardenOS Pocket
+
+Needs an **Advanced Pocket Computer** with a wireless or ender modem upgrade. Run the same Pastebin command on it
+(`pastebin get CeQfPV78 install`, then `install`): it installs WardenOS Pocket only (no erase; the old `startup.lua`
+is kept as `startup.old.lua`). On first start it asks how to work:
+
+- **Connect to a WardenOS computer** (recommended): pick your computer from the list, then tap **Allow** on that
+  computer's screen. Drones and Claude then run on the computer (its drones, its Claude key and settings); the pocket
+  is a remote screen for them.
+- **Run on this pocket only**: the pocket claims and drives drones itself and runs Claude with its own key.
+
+The home screen has **Drones** (status, Go home, Stop, Set home, driving, all home), **Claude**, **Terminal**
+(type `exit` to come back) and **Settings** (mode, pick/forget the computer, theme, update, exit to CraftOS).
+Paired pockets are listed in `/os/pockets` on the computer. Rednet range is the modem's range (ender modems: unlimited).
+
 ## Update
 
 Open **Settings > System > Check for updates**, then **Update now**. Or run `install update` in CraftOS.
