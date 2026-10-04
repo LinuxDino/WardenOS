@@ -1,6 +1,11 @@
 -- WardenOS boot: boot menu -> WardenOS or plain CraftOS
 rawset(_G, "shell", shell)
 
+-- WardenOS terminal commands (btop, neofetch, ...) live in /os/bin
+if shell.setPath and not (":" .. shell.path() .. ":"):find(":/os/bin:", 1, true) then
+  shell.setPath(shell.path() .. ":/os/bin")
+end
+
 local ok, choice = pcall(dofile, "/os/boot.lua")
 term.redirect(term.native())
 term.setBackgroundColor(colors.black)

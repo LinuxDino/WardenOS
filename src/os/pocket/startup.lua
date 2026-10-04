@@ -1,6 +1,11 @@
 -- WardenOS Pocket: starts the pocket UI (this file is /startup.lua on a pocket computer)
 rawset(_G, "shell", shell)
 
+-- WardenOS terminal commands (btop, neofetch, ...) live in /os/bin
+if shell.setPath and not (":" .. shell.path() .. ":"):find(":/os/bin:", 1, true) then
+  shell.setPath(shell.path() .. ":/os/bin")
+end
+
 local ok, err = pcall(dofile, "/os/pocket/main.lua")
 term.redirect(term.native())
 if not ok then
