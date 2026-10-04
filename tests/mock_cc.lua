@@ -92,18 +92,112 @@ window = { create = function(parent, x, y, w, h, vis)
 end }
 
 ---------------------------------------------------------------- peripherals
+-- optional globals from the test: MODEM (wireless modem on "back"), DRIVE (disk drive "bottom" with a floppy),
+-- TURTLE (this computer is a turtle)
 peripheral = {
-  getNames = function() return mon and { "right", "left" } or { "left" } end,
+  getNames = function()
+    local t = mon and { "right", "left" } or { "left" }
+    if MODEM then t[#t + 1] = "back" end
+    if DRIVE then t[#t + 1] = "bottom" end
+    return t
+  end,
   getType = function(n)
     if n == "right" and mon then return "monitor" end
     if n == "left" then return "create_stressometer", "inventory" end
+    if n == "back" and MODEM then return "modem" end
+    if n == "bottom" and DRIVE then return "drive" end
   end,
   wrap = function(n) if n == "right" then return mon end end,
   find = function(t) if t == "monitor" then return mon end end,
   getMethods = function(n) if n == "left" then return { "getStress", "getStressCapacity", "list" } end end,
 }
-disk = { isPresent = function() return false end }
-rednet = { isOpen = function() return false end }
+disk = {
+  isPresent = function(n) return DRIVE and n == "bottom" end,
+  hasData = function(n) return DRIVE and n == "bottom" end,
+  getMountPath = function(n) if DRIVE and n == "bottom" then return "disk" end end,
+  setLabel = function() end,
+}
+
+-- rednet: what this computer sends is recorded in M.sent
+M.sent, M.open = {}, {}
+rednet = {
+  open = function(n) if n == "back" and MODEM then M.open[n] = true else error("No such modem: " .. n) end end,
+  isOpen = function(n)
+    if n then return M.open[n] == true end
+    return next(M.open) ~= nil
+  end,
+  send = function(id, msg, proto)
+    if not next(M.open) then return false end
+    M.sent[#M.sent + 1] = { to = id, msg = msg, proto = proto }
+    return true
+  end,
+  broadcast = function(msg, proto) M.sent[#M.sent + 1] = { to = "all", msg = msg, proto = proto } end,
+  receive = function(proto)
+    while true do
+      local _, id, msg, p = os.pullEvent("rednet_message")
+      if proto == nil or p == proto then return id, msg, p end
+    end
+  end,
+}
+gps = { locate = function() return nil end }
+
+-- turtle: actions are recorded in M.turtle
+M.turtle = {}
+if TURTLE then
+  local sel, fuel = 1, 500
+  local inv = { [1] = { name = "minecraft:coal", count = 12 }, [5] = { name = "minecraft:cobblestone", count = 64 } }
+  turtle = {}
+  for _, n in ipairs { "forward", "back", "up", "down", "turnLeft", "turnRight", "dig", "digUp", "digDown",
+                       "place", "placeUp", "placeDown", "suck", "drop" } do
+    turtle[n] = function() M.turtle[#M.turtle + 1] = n return true end
+  end
+  turtle.getFuelLevel = function() return fuel end
+  turtle.getFuelLimit = function() return 20000 end
+  turtle.getSelectedSlot = function() return sel end
+  turtle.select = function(n) sel = n return true end
+  turtle.getItemCount = function(n) return inv[n] and inv[n].count or 0 end
+  turtle.getItemDetail = function(n) return inv[n] end
+  turtle.refuel = function()
+    if inv[sel] and inv[sel].name == "minecraft:coal" then fuel = fuel + 80 * inv[sel].count inv[sel] = nil return true end
+    return false
+  end
+end
+
+-- parallel, like CraftOS: every coroutine gets the events it waits for
+parallel = {}
+local function runAll(any, ...)
+  local fns, cos, filters = { ... }, {}, {}
+  for i, f in ipairs(fns) do cos[i] = coroutine.create(f) end
+  local ev = { n = 0 }
+  while true do
+    local alive = 0
+    for i = 1, #fns do
+      local co = cos[i]
+      if co then
+        if filters[i] == nil or filters[i] == ev[1] or ev[1] == "terminate" then
+          local ok, f = coroutine.resume(co, table.unpack(ev, 1, ev.n))
+          if not ok then error(f, 0) end
+          filters[i] = f
+        end
+        if coroutine.status(co) == "dead" then
+          if any then return i end
+          cos[i] = false
+        else
+          alive = alive + 1
+        end
+      end
+    end
+    if alive == 0 then return end
+    ev = table.pack(os.pullEventRaw())
+  end
+end
+parallel.waitForAny = function(...) return runAll(true, ...) end
+parallel.waitForAll = function(...) return runAll(false, ...) end
+
+shell = {
+  getRunningProgram = function() return M.program or "startup.lua" end,
+  run = function(path, ...) M.shellRuns = (M.shellRuns or "") .. path .. ";" return true end,
+}
 
 ---------------------------------------------------------------- filesystem
 local FS = { ["/rom"] = true }          -- path -> string (file) | true (dir)
@@ -146,6 +240,13 @@ function fs.delete(p)
   p = norm(p)
   if p == "/rom" or p:sub(1, 5) == "/rom/" then error("Access denied") end
   for k in pairs(FS) do if k == p or k:sub(1, #p + 1) == p .. "/" then FS[k] = nil end end
+end
+function fs.copy(a, b)
+  a, b = norm(a), norm(b)
+  if type(FS[a]) ~= "string" then error("No such file: " .. a) end
+  if FS[b] ~= nil then error("File exists: " .. b) end
+  fs.makeDir(fs.getDir(b))
+  FS[b] = FS[a]
 end
 function fs.getDrive(p) p = norm(p) if p:sub(1, 4) == "/rom" then return "rom" end return "hdd" end
 function fs.getSize(p) local v = FS[norm(p)] return type(v) == "string" and #v or 0 end
@@ -231,7 +332,10 @@ os.run = function(env, path, ...)            -- stand-in for shell/lua/edit: loo
   print("[" .. path .. "]")
   while true do os.pullEvent() end
 end
-sleep = function() end
+sleep = function()                              -- inside a coroutine: wait for the next timer event
+  local _, main = coroutine.running()
+  if not main then coroutine.yield("timer") end
+end
 read = function() local l = table.remove(LINES, 1) if not l then error("SCRIPT_END", 0) end return l end
 print = function(...)
   local t = {}

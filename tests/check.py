@@ -36,9 +36,13 @@ check(sorted(listed) == on_disk, "manifest.lua does not match src/: missing %s, 
       % (sorted(set(on_disk) - set(listed)), sorted(set(listed) - set(on_disk))))
 check(len(set(listed)) == len(listed), "duplicate entries in manifest.lua")
 cfg_ver = re.search(r'version\s*=\s*"([^"]+)"', read("src/os/config.lua")).group(1)
+agent_ver = re.search(r'local VERSION = "([^"]+)"', read("src/os/drone/agent.lua")).group(1)
+check(agent_ver == manifest.version, "version mismatch: drone agent %s, manifest.lua %s" % (agent_ver, manifest.version))
+drone = [manifest.drone[i] for i in range(1, len(manifest.drone) + 1)]
+check(all(f in listed for f in drone), "manifest.lua drone list has files that are not in files")
 check(cfg_ver == manifest.version, "version mismatch: config.lua %s, manifest.lua %s" % (cfg_ver, manifest.version))
 
-lua_files = ["install.lua", "manifest.lua"] + ["src/" + f for f in on_disk if f.endswith(".lua")]
+lua_files = ["install.lua", "manifest.lua", "pastebin.lua"] + ["src/" + f for f in on_disk if f.endswith(".lua")]
 compile_ = rt.eval("function(src, name) local f, e = load(src, name, 't', {}) return f ~= nil, e end")
 for f in lua_files:
     src = read(f)
@@ -171,7 +175,7 @@ for (CW, CH, MW, MH) in [(51, 19, 0, 0), (51, 19, 57, 24), (51, 19, 29, 13), (51
             check("Up to date (%s)" % manifest.version in text, mtag + " settings: update check did not report up to date")
             check(st and st.display == "mirror", mtag + " settings: display mode not saved")
             check(st and st.theme == "light", mtag + " settings: theme not saved")
-            check(st and len(st.dock) == 3, mtag + " settings: dock pin not toggled")
+            check(st and len(st.dock) == 4, mtag + " settings: dock pin not toggled")
             check(bt and bt.default == "craftos", mtag + " settings: boot default not saved")
 
     # --- Settings "Update now": kernel exits, installer updates without asking, reboots
@@ -207,6 +211,142 @@ for (CW, CH, MW, MH) in [(51, 19, 0, 0), (51, 19, 57, 24), (51, 19, 29, 13), (51
     check(fs2.get("/os/kernel.lua") == read("src/os/kernel.lua"), tag + " update: kernel not updated")
     check(M5.violations == 0, "%s update: %d chars drawn off-screen" % (tag, M5.violations))
     print("dry run %-24s ok" % tag if not [f for f in fail if f.startswith(tag)] else "dry run %-24s FAILED" % tag)
+
+# ---------------------------------------------------------------- drones
+def lua_table(rt, d):
+    if isinstance(d, dict):
+        return rt.table_from({k: lua_table(rt, v) for k, v in d.items()})
+    if isinstance(d, list):
+        return rt.table_from([lua_table(rt, v) for v in d])
+    return d
+
+def sent(M):
+    out = []
+    for i in range(1, len(M.sent) + 1):
+        e = M.sent[i]
+        out.append((e.to, e.msg.t, e.msg.cmd if e.msg.t == "cmd" else None, e.proto))
+    return out
+
+# a computer with the full OS installed (from the clean install above, 51x19, no monitor)
+rt, M = new_env(51, 19, 0, 0, [["key", ENTER]] + [["key", DOWN]] * 80 + [["key", ENTER]] * 3,
+                ["AGREE", "", "dino", "secret1", "secret1", "ERASE"])
+run(rt, read("install.lua"), "install.lua")
+pc = snapshot_fs(M)
+
+# --- Drones app: sees a turtle, claims it, drives it; the kernel answers pings
+def turtle_status(owner):
+    return {"t": "status", "kind": "turtle", "version": "1.2.0", "label": "miner", "owner": owner,
+            "fuel": 500, "fuelLimit": 20000, "task": "manual", "state": "ready", "slots": 2, "selected": 1,
+            "items": [], "log": ["12:00 agent started"]}
+login_ev = [["key", ENTER]] + [["char", c] for c in "secret1"] + [["key", ENTER]]
+# app view -> Drones tile; the window opens at the first spawn spot: x=8, y=3 (content starts at y+1)
+ids = [f[len("os/apps/"):-4] for f in listed if f.startswith("os/apps/")]
+orders = {i: int(re.search(r"order = (\d+)", read("src/os/apps/%s.lua" % i)).group(1)) for i in ids}
+ids.sort(key=lambda i: (orders[i], i))
+k = ids.index("drones")
+tx, ty = 8 + (k % 3) * 12, 4 + (k // 3) * 4
+app_h = int(re.search(r"h = (\d+)", read("src/os/apps/drones.lua")).group(1))
+wx, wy = 8, max(2, min(3, 19 - min(app_h, 18) + 1))    # first spawn spot; content row r = screen row wy + r
+rt, M = new_env(51, 19, 0, 0, [], [], pc)
+rt.globals().MODEM = True
+ev = login_ev + [["mouse_click", 1, 3, 2], ["mouse_click", 1, tx + 1, ty],
+                 ["rednet_message", 12, "STATUS_FREE", "wardenos"],
+                 ["rednet_message", 30, rt.table_from({"t": "ping"}), "wardenos"],
+                 ["mouse_click", 1, wx + 2, wy + 3],            # tap the turtle row (first device)
+                 ["mouse_click", 1, wx + 2, wy + 9],            # Claim this drone
+                 ["rednet_message", 12, "STATUS_MINE", "wardenos"],
+                 ["mouse_click", 1, wx + 2, wy + 9],            # Fwd
+                 ["rednet_message", 12, "ACK", "wardenos"],
+                 ["key", F12]]
+evs = []
+for e in ev:
+    if len(e) > 2 and e[2] == "STATUS_FREE": e = [e[0], e[1], lua_table(rt, turtle_status(None)), e[3]]
+    if len(e) > 2 and e[2] == "STATUS_MINE": e = [e[0], e[1], lua_table(rt, turtle_status(7)), e[3]]
+    if len(e) > 2 and e[2] == "ACK": e = [e[0], e[1], lua_table(rt, {"t": "ack", "seq": 2, "cmd": "forward", "ok": True}), e[3]]
+    evs.append(rt.table_from(e))
+rt.globals().SCRIPT_EVENTS = rt.table_from(evs)
+M = rt.execute(read("tests/mock_cc.lua"))
+for kk, v in pc.items(): M.FS[kk] = v
+ok, err = run(rt, pc["/startup.lua"], "startup.lua")
+log = "\n".join(M.log.values())
+msgs = sent(M)
+check("stopped" in log and "crashed" not in screen_text(M), "drones app: crashed or no clean exit: " + log[-300:])
+check((30, "status", None, "wardenos") in msgs, "kernel: did not answer a ping: %s" % msgs)
+check((12, "cmd", "claim", "wardenos") in msgs, "drones app: claim not sent: %s" % msgs)
+check((12, "cmd", "forward", "wardenos") in msgs, "drones app: forward not sent: %s" % msgs)
+check(any("forward ok" in w for w in M.written.values()) or "forward ok" in screen_text(M), "drones app: ack not shown")
+check(M.violations == 0, "drones app: drew off-screen")
+print("drones app: ok" if not [f for f in fail if f.startswith("drones") or f.startswith("kernel")] else "drones app: FAILED")
+
+# --- the agent on a turtle: answers pings, only its owner may control it
+def turtle_env(events, fs=None, lines=()):
+    rt = lua.LuaRuntime(unpack_returned_tuples=True)
+    g = rt.globals()
+    g.HOST_READ = lambda p: read(p)
+    g.CW, g.CH, g.MW, g.MH = 39, 13, 0, 0
+    g.TURTLE, g.MODEM = True, True
+    evs = []
+    for e in events:
+        evs.append(rt.table_from([lua_table(rt, x) for x in e]))
+    g.SCRIPT_EVENTS = rt.table_from(evs)
+    g.SCRIPT_LINES = rt.table_from(list(lines))
+    M = rt.execute(read("tests/mock_cc.lua"))
+    for kk, v in (fs or {}).items(): M.FS[kk] = v
+    return rt, M
+cmd = lambda frm, c, seq: ["rednet_message", frm, {"t": "cmd", "to": 7, "seq": seq, "cmd": c}, "wardenos"]
+rt, M = turtle_env([["timer", 1],
+                    ["rednet_message", 5, {"t": "ping"}, "wardenos"],
+                    cmd(9, "forward", 1),                 # nobody owns it yet: refused
+                    cmd(5, "claim", 2), cmd(5, "forward", 3), cmd(5, "refuel", 4),
+                    cmd(9, "claim", 5), cmd(9, "dig", 6),  # someone else: refused
+                    ["timer", 2], ["timer", 3]])
+ok, err = run(rt, read("src/os/drone/agent.lua"), "agent.lua")
+msgs = sent(M)
+acks = {M.sent[i].msg.seq: M.sent[i].msg.ok for i in range(1, len(M.sent) + 1) if M.sent[i].msg.t == "ack"}
+check(err == "SCRIPT_END", "agent: stopped early: %s" % err)
+check((5, "status", None, "wardenos") in msgs, "agent: no ping answer")
+check(("all", "status", None, "wardenos") in msgs, "agent: no status broadcast")
+check(acks == {1: False, 2: True, 3: True, 4: True, 5: False, 6: False}, "agent: wrong command results %s" % acks)
+check(list(M.turtle.values()) == ["forward"], "agent: turtle did %s" % list(M.turtle.values()))
+check('owner' in snapshot_fs(M).get("/os/drone/config", ""), "agent: owner not saved")
+check(M.violations == 0, "agent: drew off-screen %s" % [l for l in M.log.values() if "OFFSCREEN" in l][:3])
+print("drone agent: ok" if not [f for f in fail if f.startswith("agent")] else "drone agent: FAILED")
+
+# --- install disk made by the Drones app, then a turtle boots from it
+rt, M = new_env(51, 19, 0, 0, [], [], pc)
+rt.globals().DRIVE = True
+res = rt.eval("function() return table.pack(dofile('/os/drone/disk.lua')(7)) end")()
+dfs = snapshot_fs(M)
+check(res[1] is True and dfs.get("/disk/startup.lua") == read("src/os/drone/diskstartup.lua")
+      and dfs.get("/disk/wardenos/agent.lua") == read("src/os/drone/agent.lua"), "disk maker failed: %s" % res[2])
+tfs = {k: v for k, v in dfs.items() if k.startswith("/disk")}
+tfs["/startup.lua"] = "print('old')"
+rt, M = turtle_env([], tfs)
+rt.globals().TURTLE = True
+M.program = "disk/startup.lua"
+ok, err = run(rt, tfs["/disk/startup.lua"], "disk/startup.lua")
+t2 = snapshot_fs(M)
+check(ok and t2.get("/os/drone/agent.lua") == read("src/os/drone/agent.lua")
+      and t2.get("/startup.lua") == read("src/os/drone/startup.lua") and t2.get("/startup.old.lua") == "print('old')"
+      and "owner = 7" in t2.get("/os/drone/config", "").replace('["owner"]', "owner") and M.label == "drone-7"
+      and "/os/drone/agent.lua" in (M.shellRuns or ""), "disk install on turtle failed: %s %s" % (err, sorted(t2)))
+# a computer booting with the disk inserted still starts its own system
+rt, M = new_env(51, 19, 0, 0, [], [], tfs)
+M.program = "disk/startup.lua"
+ok, err = run(rt, tfs["/disk/startup.lua"], "disk/startup.lua")
+check(ok and M.shellRuns == "/startup.lua;" and "/os/drone/agent.lua" not in snapshot_fs(M),
+      "disk on a computer: did not hand over to its own startup (%s)" % M.shellRuns)
+print("install disk: ok" if not [f for f in fail if f.startswith("disk")] else "install disk: FAILED")
+
+# --- installer on a turtle installs the agent (no wizard, no erase); also via the Pastebin loader
+for script, name in [(read("install.lua"), "install.lua"), (read("pastebin.lua"), "pastebin.lua")]:
+    rt, M = turtle_env([], {"/notes.txt": "keep"}, ["5", "y"])
+    ok, err = run(rt, script, name)
+    t3 = snapshot_fs(M)
+    check(M.rebooted and t3.get("/notes.txt") == "keep" and t3.get("/startup.lua") == read("src/os/drone/startup.lua")
+          and t3.get("/os/drone/agent.lua") == read("src/os/drone/agent.lua") and "/os/kernel.lua" not in t3
+          and "5" in t3.get("/os/drone/config", ""), "turtle install via %s failed: %s %s %s" % (name, err, sorted(t3), "\n".join(M.log.values())[-400:]))
+print("turtle install: ok" if not [f for f in fail if f.startswith("turtle install")] else "turtle install: FAILED")
 
 # --- download failure must not touch anything
 read_real = read

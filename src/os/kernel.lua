@@ -530,7 +530,21 @@ local function onTouch(x, y)
   end
 end
 
+---------------------------------------------------------------- network (rednet protocol "wardenos")
+local PROTO = "wardenos"
+local function openModems()
+  for _, n in ipairs(peripheral.getNames()) do
+    if peripheral.getType(n) == "modem" and not rednet.isOpen(n) then pcall(rednet.open, n) end
+  end
+end
+
+local function netStatus()
+  return { t = "status", kind = "computer", version = cfg.version, label = os.getComputerLabel(),
+           user = user.name, display = mode }
+end
+
 ---------------------------------------------------------------- main loop
+openModems()
 out.setBackgroundColor(colors.black)
 out.clear()
 user = doLogin()
@@ -584,6 +598,14 @@ while running do
 
   elseif name == "monitor_resize" or name == "term_resize" then
     redraw = true
+
+  elseif name == "rednet_message" and ev[4] == PROTO then  -- answer pings, apps get every message
+    if type(ev[3]) == "table" and ev[3].t == "ping" then rednet.send(ev[2], netStatus(), PROTO) end
+    broadcast(ev)
+
+  elseif name == "peripheral" then                         -- a modem attached later
+    openModems()
+    broadcast(ev)
 
   elseif name == "key" and ev[2] == keys.f12 then
     running = false

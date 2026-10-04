@@ -5,6 +5,8 @@
 --   install update     update to the latest version, keeps accounts, settings and your files
 --   install <branch>   use another branch of the repository (works with "update" too)
 --   install update -y  update without asking (used by Settings > Update now)
+--
+-- On a turtle it installs the WardenOS drone agent instead (no erase, no desktop).
 
 local REPO, BRANCH = "LinuxDino/WardenOS", "main"
 local TOS_VERSION, STEPS = "1.0", 5
@@ -25,8 +27,10 @@ if not http then
   print("Enable http in the CC: Tweaked config (server owner), then try again.")
   return
 end
-if not term.isColour() then
+local isTurtle = turtle ~= nil
+if not isTurtle and not term.isColour() then
   printError("WardenOS needs an Advanced Computer (gold).")
+  print("Turtles can run the WardenOS drone agent: run this installer on a turtle.")
   return
 end
 
@@ -62,7 +66,7 @@ local function download()
   term.clear()
   term.setCursorPos(1, 1)
   term.setTextColor(colors.cyan)
-  print("WardenOS installer")
+  print(isTurtle and "WardenOS drone installer" or "WardenOS installer")
   term.setTextColor(colors.lightGray)
   print(REPO .. " @ " .. branch)
   print()
@@ -70,20 +74,21 @@ local function download()
   local fn, err = load(fetch("manifest.lua"), "=manifest.lua", "t", {})
   if not fn then error("broken manifest: " .. tostring(err), 0) end
   local ok, m = pcall(fn)
-  if not ok or type(m) ~= "table" or type(m.files) ~= "table" or #m.files == 0 then
+  local list = ok and type(m) == "table" and (isTurtle and m.drone or m.files)
+  if type(list) ~= "table" or #list == 0 then
     error("broken manifest", 0)
   end
 
   local _, y = term.getCursorPos()
   local w = term.getSize()
-  for i, path in ipairs(m.files) do
+  for i, path in ipairs(list) do
     if type(path) ~= "string" or path:find("%.%.") or not path:match("^[%w_%-%./]+$") then
       error("bad path in manifest: " .. tostring(path), 0)
     end
     term.setCursorPos(1, y)
     term.clearLine()
     term.setTextColor(colors.white)
-    term.write((("[%d/%d] %s"):format(i, #m.files, path)):sub(1, w))
+    term.write((("[%d/%d] %s"):format(i, #list, path)):sub(1, w))
     local body = fetch("src/" .. path)
     if path:sub(-4) == ".lua" then
       local f, lerr = load(body, "=" .. path, "t", {})      -- syntax check only, nothing runs
@@ -94,7 +99,7 @@ local function download()
   term.setCursorPos(1, y)
   term.clearLine()
   term.setTextColor(colors.green)
-  print(("Downloaded %d files (v%s)"):format(#m.files, tostring(m.version)))
+  print(("Downloaded %d files (v%s)"):format(#list, tostring(m.version)))
   term.setTextColor(colors.white)
   MANIFEST = m
 end
@@ -112,6 +117,54 @@ if not okd then
   return
 end
 local OS_VERSION = tostring(MANIFEST.version)
+
+---------------------------------------------------------------- turtle: drone agent
+if isTurtle then
+  local function droneInstall()
+    local owner
+    if mode ~= "update" and not yes then
+      print()
+      print("This turtle becomes a WardenOS drone. Its startup.lua is replaced (the old one is kept as startup.old.lua). Other files stay.")
+      print()
+      print("Owner = the computer that controls it.")
+      print("Press Enter to claim it later in the Drones app.")
+      write("Owner computer ID: ")
+      local id = read()
+      owner = tonumber(id)
+      if id ~= "" and not owner then print("Not a number, claim it later in the Drones app.") end
+      write("Install? (y/n) ")
+      if read():lower() ~= "y" then
+        print("Cancelled. Nothing was changed.")
+        return
+      end
+    end
+    if fs.exists("/startup.lua") and not fs.exists("/os/drone/agent.lua") and not fs.exists("/startup.old.lua") then
+      fs.copy("/startup.lua", "/startup.old.lua")
+    end
+    local function put(path, data)
+      local dir = fs.getDir(path)
+      if dir ~= "" then fs.makeDir(dir) end
+      local f = assert(fs.open(path, "w"))
+      f.write(data)
+      f.close()
+    end
+    for path, data in pairs(FILES) do
+      put(path == "/os/drone/startup.lua" and "/startup.lua" or path, data)
+    end
+    if owner and not fs.exists("/os/drone/config") then
+      put("/os/drone/config", textutils.serialize({ owner = owner }))
+    end
+    if not os.getComputerLabel() then os.setComputerLabel("drone-" .. os.getComputerID()) end
+    print("WardenOS drone " .. OS_VERSION .. " installed. Rebooting...")
+    sleep(1)
+    os.reboot()
+  end
+  local ok, err = pcall(droneInstall)
+  if not ok then
+    if tostring(err):find("Terminated") then print("Cancelled.") else printError("Install failed: " .. tostring(err)) end
+  end
+  return
+end
 
 math.randomseed(os.epoch("utc") % 2147483647 + math.floor(os.clock() * 1000))
 

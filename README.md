@@ -6,6 +6,8 @@ built for modded Minecraft worlds.
 - Clean desktop: dock, **Apps** view with every app, real windows (move, maximize, minimize, close)
 - **Settings** app: one-tap updates from GitHub, display mode, monitor text size, theme, dock, boot menu
 - Uses the whole monitor (any side, auto-detected) at a small, crisp text size; or mirror it, or use the computer alone
+- **Drones**: see every turtle and WardenOS computer on the network, live turtle status (task, fuel, GPS position,
+  inventory, activity log) and remote control
 - **Peripheral Inspector**: browse every attached or networked peripheral from any mod and see its methods
 - **Lua Console**, **Terminal** (full CraftOS shell), **Files**, **Editor**, **System Monitor**
 - Dark and light theme, login with salted + hashed passwords
@@ -17,7 +19,7 @@ built for modded Minecraft worlds.
 Needs an **Advanced Computer** and the CC: Tweaked `http` API enabled (it is by default).
 An Advanced Monitor is optional (at least 3x2 blocks recommended).
 
-From Pastebin ([pastebin.com/CeQfPV78](https://pastebin.com/CeQfPV78)):
+From Pastebin ([pastebin.com/CeQfPV78](https://pastebin.com/CeQfPV78)), on a computer or a turtle:
 
 ```
 pastebin get CeQfPV78 install
@@ -32,6 +34,18 @@ wget run https://raw.githubusercontent.com/LinuxDino/WardenOS/main/install.lua
 
 The installer downloads and checks every file **before** it changes anything, then walks you through
 the terms, your account and a clean install (this erases the computer).
+
+## Drones (turtles)
+
+Put a wireless or ender modem on the turtle, then either:
+
+- run the same Pastebin command on the turtle (`pastebin get CeQfPV78 install`, then `install`). On a turtle it
+  installs the drone agent only: no erase, other files stay, the old `startup.lua` is kept as `startup.old.lua`.
+- or open **Drones** on a WardenOS computer, put a floppy in a disk drive and tap **install disk**. Every turtle
+  placed next to that drive installs the agent when it starts and is owned by that computer.
+
+In **Drones**, tap a turtle and **Claim** it (only its owner can control it). Then drive it, dig, place, refuel,
+locate (needs GPS) or **Update** it to the newest agent from GitHub.
 
 ## Update
 
@@ -60,7 +74,8 @@ To install from another branch: `install <branch>` or `install update <branch>`.
 
 ```
 src/               the OS exactly as it lands on the computer (/startup.lua, /os/...)
-install.lua        the installer (this is what goes on Pastebin)
+install.lua        the installer (always downloaded fresh from GitHub)
+pastebin.lua       the tiny loader on Pastebin: fetches and runs install.lua from GitHub
 manifest.lua       list of files the installer downloads; add new files here
 tests/check.py     static checks + full dry run against a mocked CC: Tweaked (pip install lupa)
 ```
