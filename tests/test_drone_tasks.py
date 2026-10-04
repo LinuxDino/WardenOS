@@ -827,5 +827,65 @@ lt = p[-1].lastTask
 n_wall, n_free = (int(v) for v in lt.info.split(", ")) if lt and lt.ok else (0, 0)
 check(n_wall >= 6 and n_free == 2 and originof(p[-1]) == (0, 64, 0, 1), "memory: after sethome %s" % (lt.info if lt else None))
 
+# --- who started a task (by), task time, live progress of a goto, status broadcast rate
+# simulated clock: every move takes 0.25 s; BC = clock time of every status broadcast
+CLOCK_PRE = """
+CLOCK = 0
+os.clock = function() return CLOCK end
+local fwd = turtle.forward
+turtle.forward = function() local ok, e = fwd() if ok then CLOCK = CLOCK + 0.25 end return ok, e end
+BC = {}
+local bc = rednet.broadcast
+rednet.broadcast = function(msg, p)
+  if type(msg) == "table" and msg.t == "status" then BC[#BC + 1] = CLOCK end
+  return bc(msg, p)
+end
+"""
+
+
+def by_cmd(c, seq, arg=None, by=None):
+    e = cmd(5, c, seq, arg)
+    if by:
+        e[2]["by"] = by
+    return e
+
+
+rt, M, err = run_agent([cmd(5, "claim", 1), calib(0, 64, 0, seq=2),
+                        by_cmd("goto", 3, {"x": 0, "y": 64, "z": -40}, by="claude")] + MANY + [ping(5)],
+                       pre=setup((0, 64, 0, 0)) + CLOCK_PRE)
+st_all = statuses(M)
+live = [s for s in st_all if s.task == "goto 0 64 -40"]
+check(err == "SCRIPT_END" and true_pos(rt)[:3] == (0, 64, -40), "by: goto did not arrive %s %s" % (err, true_pos(rt)))
+check(live and all(s.by and s.by.who == "claude" and s.by.id == 5 for s in live),
+      "by: running statuses without by=claude %s" % [dict(s.by) if s.by else None for s in live])
+moving = [s for s in live if s.progress and s.progress.phase == "moving"]
+check(len(moving) >= 5, "progress: %d moving statuses" % len(moving))
+if moving:
+    p = moving[-1].progress
+    check(p.total == 40 and 1 <= p.step <= 40 and p.target.x == 0 and p.target.y == 64 and p.target.z == -40
+          and p.replans == 0, "progress: %s step %s/%s" % (dict(p), p.step, p.total))
+    steps = [s.progress.step for s in moving]
+    check(steps == sorted(steps) and steps[-1] > steps[0], "progress: steps %s" % steps)
+    check(isinstance(moving[-1].taskTime, int) and moving[-1].taskTime >= 8, "taskTime %s" % moving[-1].taskTime)
+end = pinged(M)[-1]
+check(end.by is None and end.progress is None and end.taskTime is None and end.lastTask
+      and end.lastTask.ok is True and end.lastTask.by and end.lastTask.by.who == "claude" and end.lastTask.by.id == 5,
+      "by: after the task by=%s lastTask=%s" % (end.by, dict(end.lastTask) if end.lastTask else None))
+# rate: 40 moves = 10 simulated seconds -> about one broadcast per second (+ the ack and the finish)
+bc = [rt.globals().BC[i] for i in range(1, len(rt.globals().BC) + 1)]
+during = [t for t in bc if 0 < t < 10]
+check(5 <= len(during) <= 12, "rate: %d status broadcasts in 10 s: %s" % (len(during), bc))
+per_sec = {}
+for t in during:                                 # (the mock's timers after the task don't advance the clock)
+    per_sec[int(t)] = per_sec.get(int(t), 0) + 1
+check(per_sec and max(per_sec.values()) <= 2, "rate: too many in one second %s" % per_sec)
+# a player's task: by.who = "player"; a run task reports phase "working"
+rt, M, err = run_agent([cmd(5, "claim", 1), cmd(5, "run", 2, {"name": "slow", "code": "sleep(1) report('x') sleep(1)"}),
+                        ["timer", 1], ping(5), ["timer", 2], ["timer", 3], ping(5)], pre=CLOCK_PRE)
+p = pinged(M)
+check(p and p[0].task == "slow" and p[0].by and p[0].by.who == "player" and p[0].progress
+      and p[0].progress.phase == "working" and p[0].taskTime == 0, "player: %s" % (dict(p[0].by) if p and p[0].by else None))
+check(p and p[-1].by is None and p[-1].lastTask and p[-1].lastTask.by.who == "player", "player: lastTask.by")
+
 print("drone tasks: ok" if not fail else "drone tasks: FAILED (%d)" % len(fail))
 sys.exit(1 if fail else 0)

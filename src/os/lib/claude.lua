@@ -129,22 +129,52 @@ local function postOne(key, payload)
   return a, b, c, d
 end
 
+-- debug log (/os/lib/log.lua, shown by the System Monitor): one entry per API call; never breaks a request
+local function logCall(body, t0, retries, res, err)
+  pcall(function()
+    local L = rawget(_G, "WardenLog")
+    if not L and fs.exists("/os/lib/log.lua") then L = dofile("/os/lib/log.lua") end
+    if type(L) ~= "table" then return end
+    local e = { model = body.model, ms = os.epoch("utc") - t0, retries = retries }
+    if type(body.output_config) == "table" then e.effort = body.output_config.effort end
+    if type(res) == "table" then
+      local u = type(res.usage) == "table" and res.usage or {}
+      e.input, e.output = tonumber(u.input_tokens), tonumber(u.output_tokens)
+      e.cacheRead, e.cacheWrite = tonumber(u.cache_read_input_tokens), tonumber(u.cache_creation_input_tokens)
+      e.stop = res.stop_reason ~= nil and tostring(res.stop_reason) or nil
+      if res.model ~= nil and res.model ~= body.model then e.served = tostring(res.model) end
+    end
+    if err then
+      e.error = tostring(err):sub(1, 200)
+      L.add("error", { source = "claude", text = e.error })
+    end
+    L.add("claude", e)
+  end)
+end
+
 -- Messages API call with up to 2 retries for 429 / 5xx / network errors.
 -- body is a Lua table (use json.array / json.object where the JSON type matters).
 function M.send(key, body, onRetry)
   local payload = json.encode(body)
+  local okt, t0 = pcall(os.epoch, "utc")
+  t0 = okt and t0 or 0
   local res, msg, retry, after
+  local retries = 0
   for attempt = 1, 3 do
     res, msg, retry, after = postOne(key, payload)
     if res or not retry or attempt == 3 then break end
+    retries = retries + 1
     local wait = math.min(after or (2 ^ attempt), 20)
     if onRetry then onRetry(msg, wait) end
     sleep(wait)
   end
-  if not res then return nil, msg end
+  if not res then logCall(body, t0, retries, nil, msg) return nil, msg end
   if res.type == "error" then
-    return nil, type(res.error) == "table" and tostring(res.error.message) or "API error"
+    local m = type(res.error) == "table" and tostring(res.error.message) or "API error"
+    logCall(body, t0, retries, nil, m)
+    return nil, m
   end
+  logCall(body, t0, retries, res)
   return res
 end
 

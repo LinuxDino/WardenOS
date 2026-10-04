@@ -8,6 +8,15 @@
 --   kit.precheck(name, input) -> nil | why: refuse before asking (no drone to use, forbidden command)
 --   kit.describe(name, input) -> short text for the approval card / transcript
 --   kit.system             the system prompt (stable: no times or changing data, so it is cached)
+--   kit.setBusy(busy, status)  tell the shared activity table what this conversation is doing
+-- Every drone command Claude sends carries by = "claude" (the drone shows who started its task).
+-- Live activity, shared with the kernel's top bar and the apps (WardenOS.claude on a WardenOS computer, the
+-- global WardenClaude elsewhere, e.g. a pocket in local mode):
+--   { busy, status, drones = { [id] = { action = "goto 10 64 5", since = os.epoch("utc"), at = os.clock(),
+--     task = true when the command started a task, pending = true until the drone answered } }, talks = {...} }
+--   K.activity()           that table (created when missing)
+--   K.prune(cache)         drop entries whose task ended (cache = [id] = drone status with seen = os.clock())
+--   K.lines(cache)         { { id, action, phase, step, total, text = "#12 goto 10 64 5 - moving 5/20" }, ... }
 -- Map tools are only offered where the world map lives (/os/lib/map.lua: WardenOS computers, not pockets),
 -- template tools where /os/lib/templates.lua is installed.
 -- opts.api: the caller's /os/lib/claude.lua instance. Its json module must build the tools and read the
@@ -17,6 +26,88 @@ local PROTO = "wardenos"
 local FACE = { [0] = "north", "east", "south", "west" }
 
 local K = {}
+
+---------------------------------------------------------------- live activity (what Claude does with drones)
+local LIVE = 10                                 -- seconds: a drone status newer than this is current
+local TASK_KEEP, CMD_KEEP = 600, 120            -- seconds an entry stays without a running task
+local TALK_STALE = 900                          -- a conversation that has not reported for this long is gone
+local TASK_CMDS = { run = true, ["goto"] = true, home = true }
+
+function K.activity()
+  local W = rawget(_G, "WardenOS")
+  local A
+  if type(W) == "table" then
+    A = W.claude
+    if type(A) ~= "table" then A = {} W.claude = A end
+  else
+    A = rawget(_G, "WardenClaude")
+    if type(A) ~= "table" then A = {} rawset(_G, "WardenClaude", A) end
+  end
+  if type(A.drones) ~= "table" then A.drones = {} end
+  if type(A.talks) ~= "table" then A.talks = {} end
+  if A.busy == nil then A.busy, A.status = false, "" end
+  return A
+end
+
+local function runsForClaude(d)
+  return type(d) == "table" and type(d.by) == "table" and d.by.who == "claude"
+end
+
+-- the entry of a drone whose task ended (a status newer than the command, without by = claude) is dropped
+function K.prune(cache)
+  local A = K.activity()
+  local now = os.clock()
+  for id, e in pairs(A.drones) do
+    local d = type(cache) == "table" and cache[id] or nil
+    local at = tonumber(e.at) or 0
+    if type(e) ~= "table" then
+      A.drones[id] = nil
+    elseif runsForClaude(d) then
+      e.running = true
+    elseif e.task and not e.pending and d and tonumber(d.seen) and d.seen > at then
+      A.drones[id] = nil
+    elseif now - at > (e.task and TASK_KEEP or CMD_KEEP) then
+      A.drones[id] = nil
+    end
+  end
+  return A
+end
+
+local function progressText(d)
+  local p = type(d) == "table" and type(d.progress) == "table" and d.progress or nil
+  local out = {}
+  if p and p.phase then
+    out[1] = tostring(p.phase)
+    if tonumber(p.total) and tonumber(p.total) > 0 then out[1] = out[1] .. (" %d/%d"):format(tonumber(p.step) or 0, p.total) end
+  end
+  if tonumber(d and d.taskTime) then out[#out + 1] = math.floor(d.taskTime) .. "s" end
+  return table.concat(out, " ")
+end
+K.progressText = progressText
+
+-- drones Claude is using now: its own entries plus drones running a task Claude started
+function K.lines(cache)
+  local A = K.prune(cache)
+  local now, ids, seen = os.clock(), {}, {}
+  for id in pairs(A.drones) do if type(id) == "number" then ids[#ids + 1] = id seen[id] = true end end
+  for id, d in pairs(type(cache) == "table" and cache or {}) do
+    local live = d.online ~= false and (not tonumber(d.seen) or now - d.seen < LIVE)
+    if type(id) == "number" and not seen[id] and runsForClaude(d) and live then ids[#ids + 1] = id end
+  end
+  table.sort(ids)
+  local out = {}
+  for _, id in ipairs(ids) do
+    local e, d = A.drones[id], type(cache) == "table" and cache[id] or nil
+    local running = runsForClaude(d)
+    local action = e and e.action or (d and d.task and ("task " .. tostring(d.task))) or "?"
+    local p = running and type(d.progress) == "table" and d.progress or {}
+    local pt = running and progressText(d) or ""
+    out[#out + 1] = { id = id, action = action, phase = p.phase, step = tonumber(p.step), total = tonumber(p.total),
+                      running = running,
+                      text = ("#%d %s%s"):format(id, action, pt ~= "" and (" - " .. pt) or (e and e.pending and " ..." or "")) }
+  end
+  return out
+end
 
 local function obj(props, required)
   return json.object({ type = "object", properties = json.object(props or {}), required = json.array(required or {}) })
@@ -84,10 +175,12 @@ local function toolList(withMap, withTemplates)
   if withMap then
     local list2 = {
       { name = "map_view",
-        description = "Top-down view of the world map built from what drones have seen. One character per block: north (smaller z) at the top, west (smaller x) at the left; every row starts with its z. Without y: the highest known block of each column (surface); with y: that horizontal layer. Your drones (D), their homes (H) and protected areas (P) are marked. At most 60 x 40 blocks per call. heights = true: the surface y of each column instead of characters (at most 30 x 30).",
+        description = "Top-down view of the world map built from what drones have seen. One character per block: north (smaller z) at the top, west (smaller x) at the left; every row starts with its z. Without y: the highest known block of each column (surface); with y: that horizontal layer. Your drones (D), their homes (H) and protected areas (P) are marked. At most 60 x 40 characters per call. zoom (1, 2, 4, 8 or 16, default 1): each character stands for zoom x zoom blocks (its most common surface kind), so zoom 16 shows up to 960 x 640 blocks: zoom out first to get an overview of a big area, then look closer with zoom 1. heights = true: the surface y of each column instead of characters (at most 30 x 30, no zoom).",
         input_schema = obj({ x1 = INT("west edge (absolute x)"), z1 = INT("north edge (absolute z)"),
                              x2 = INT("east edge"), z2 = INT("south edge"),
                              y = INT("optional: show this layer instead of the surface"),
+                             zoom = { type = "integer", enum = json.array({ 1, 2, 4, 8, 16 }),
+                                      description = "optional: blocks per character (1, 2, 4, 8, 16), default 1" },
                              heights = { type = "boolean", description = "optional: surface heights" } },
                            { "x1", "z1", "x2", "z2" }) },
       { name = "map_find",
@@ -306,18 +399,70 @@ function K.new(opts)
     return nil, ("Drone #%d is not yours. Your drones: %s"):format(id, #ids > 0 and table.concat(ids, ", ") or "none")
   end
 
+  ------------------------------------------------ live activity (K.activity)
+  local talk = {}                                -- this conversation's key in activity.talks
+  function kit.setBusy(busy, status)
+    local A = K.activity()
+    local now = os.clock()
+    A.talks[talk] = busy and { status = tostring(status or ""), at = now } or nil
+    local any, latest, at = false, "", -1
+    for k, t in pairs(A.talks) do
+      if type(t) ~= "table" or now - (tonumber(t.at) or 0) > TALK_STALE then
+        A.talks[k] = nil
+      else
+        any = true
+        if t.at >= at then latest, at = t.status, t.at end
+      end
+    end
+    A.busy, A.status = any, latest
+  end
+
+  local function actionText(cmd, arg)
+    if cmd == "run" and type(arg) == "table" then return "task " .. tostring(arg.name or "?") end
+    if cmd == "goto" and type(arg) == "table" then return "goto " .. (xyz(arg) or "?") .. (arg.rel and " (rel)" or "") end
+    if type(arg) == "string" or type(arg) == "number" or type(arg) == "boolean" then return cmd .. " " .. tostring(arg) end
+    return cmd
+  end
+
+  -- remember what Claude makes drone id do (before sending); returns a function(ok) for the answer
+  local function track(id, cmd, arg)
+    if cmd == "mapdata" then return function() end end
+    local A = K.activity()
+    local prev = A.drones[id]
+    local isTask = TASK_CMDS[cmd] == true
+    -- a single command while Claude's task runs (locate, label...) does not hide the task; stop does
+    if not isTask and cmd ~= "stop" and type(prev) == "table" and prev.task and not prev.pending then
+      return function() end
+    end
+    local e = { action = actionText(cmd, arg), since = os.epoch("utc"), at = os.clock(), task = isTask, pending = true }
+    A.drones[id] = e
+    return function(ok)
+      if A.drones[id] ~= e then return end
+      if ok then
+        e.pending, e.at = nil, os.clock()
+      else
+        A.drones[id] = prev
+      end
+    end
+  end
+
   -- send one command and wait for its ack; onOther(from, msg) sees every other wardenos message meanwhile
   local function droneCall(id, cmd, arg, onOther)
     if not rednet.isOpen() then return "no modem attached to this computer", true end
     seq = seq + 1
     local mine = seq
-    rednet.send(id, { t = "cmd", to = id, seq = mine, cmd = cmd, arg = arg }, PROTO)
+    local answered = track(id, cmd, arg)
+    rednet.send(id, { t = "cmd", to = id, seq = mine, cmd = cmd, arg = arg, by = "claude" }, PROTO)
     local timer = os.startTimer(15)
     while true do
       local e, a, b, c = os.pullEvent()
-      if e == "timer" and a == timer then return "no answer from drone #" .. id .. " (out of range or offline?)", true end
+      if e == "timer" and a == timer then
+        answered(false)
+        return "no answer from drone #" .. id .. " (out of range or offline?)", true
+      end
       if e == "rednet_message" and c == PROTO and type(b) == "table" then
         if a == id and b.t == "ack" and b.seq == mine and b.cmd == cmd then   -- the Drones app numbers from 1 too
+          answered(b.ok)
           return (b.ok and "ok" or "failed") .. (b.info and (": " .. tostring(b.info)) or ""), not b.ok
         elseif onOther then
           onOther(a, b)
@@ -524,8 +669,18 @@ function K.new(opts)
     end
     local nav = type(d.nav) == "table" and ("%s %s %s facing %s"):format(tostring(d.nav.x), tostring(d.nav.y),
       tostring(d.nav.z), tostring(d.nav.f)) or "unknown"
-    local last = type(d.lastTask) == "table" and ("%s %s %s"):format(tostring(d.lastTask.name),
-      d.lastTask.ok and "ok" or "failed", tostring(d.lastTask.info or "")) or "none"
+    local function byText(b)
+      if type(b) ~= "table" then return "" end
+      return b.who == "claude" and " (started by you)" or " (started by the player)"
+    end
+    local last = type(d.lastTask) == "table" and ("%s %s %s%s"):format(tostring(d.lastTask.name),
+      d.lastTask.ok and "ok" or "failed", tostring(d.lastTask.info or ""), byText(d.lastTask.by)) or "none"
+    local prog = ""
+    if d.state == "working" and (type(d.progress) == "table" or type(d.by) == "table") then
+      local p = type(d.progress) == "table" and d.progress or {}
+      prog = ("\n  running%s: %s%s%s"):format(byText(d.by), progressText(d),
+        xyz(p.target) and (" to " .. xyz(p.target)) or "", tonumber(p.replans) and p.replans > 0 and (", replanned " .. p.replans .. "x") or "")
+    end
     local home = xyz(d.origin)
     home = home and (home .. " facing " .. (FACE[tonumber(d.origin.f) or -1] or "?")) or "unknown"
     local m = getMap()
@@ -537,7 +692,7 @@ function K.new(opts)
               nav, d.homeSet and "" or " (no home set)", type(d.pos) == "table" and table.concat(d.pos, " ") or "none",
               d.safeDig == false and "OFF" or (d.safeDig == true and "on" or "?"), prot,
               tostring(d.selected), #items > 0 and table.concat(items, ", ") or "empty", last,
-              table.concat(type(d.log) == "table" and d.log or {}, " | "))
+              table.concat(type(d.log) == "table" and d.log or {}, " | ")) .. prog
   end
 
   function RUN.drone_status(input)
@@ -575,7 +730,11 @@ function K.new(opts)
       end
     end
     local out = {}
-    for _, id in ipairs(ids) do out[#out + 1] = droneText(id, latest[id]) end
+    for _, id in ipairs(ids) do
+      out[#out + 1] = droneText(id, latest[id])
+      if latest[id] then latest[id].seen = os.clock() end
+    end
+    K.prune(latest)
     return table.concat(out, "\n")
   end
 
@@ -629,27 +788,54 @@ function K.new(opts)
         out[#out + 1] = ("z=%-6d"):format(z) .. table.concat(row)
       end
     else
-      local rows, legend, area = m.view(x1, z1, x2, z2, y, marks)
-      out[1] = ("%s, x %d..%d left to right (west to east), z %d..%d top to bottom (north to south):")
-        :format(y and ("Layer y=" .. y) or "Surface", area.x1, area.x2, area.z1, area.z2)
+      local zoom = int(input.zoom) or 1
+      if type(m.zoom) == "function" then
+        zoom = tonumber(m.zoom(zoom)) or 1
+      else
+        local zl = 1
+        while zl * 2 <= math.max(1, math.min(16, zoom)) do zl = zl * 2 end   -- 1, 2, 4, 8 or 16
+        zoom = zl
+      end
+      local rows, legend, area = m.view(x1, z1, x2, z2, y, marks, zoom)
+      -- blocks per character really used (a map without zoom support ignores the argument)
+      local zm = tonumber(area.zoom)
+      if not zm then
+        local cw = rows[1] and #rows[1] or 0
+        zm = cw > 0 and math.max(1, math.ceil((area.x2 - area.x1 + 1) / cw)) or 1
+      end
+      out[1] = ("%s, x %d..%d left to right (west to east), z %d..%d top to bottom (north to south)%s:")
+        :format(y and ("Layer y=" .. y) or "Surface", area.x1, area.x2, area.z1, area.z2,
+                zm > 1 and (", one character = %d x %d blocks"):format(zm, zm) or "")
       local ruler = {}
-      for x = area.x1, area.x2 do ruler[#ruler + 1] = (x % 10 == 0) and "|" or " " end
-      out[#out + 1] = ("%-8s"):format("") .. table.concat(ruler) .. "  (| = x divisible by 10)"
+      local unit = 10 * zm
+      for i = 1, rows[1] and #rows[1] or 0 do
+        local a = area.x1 + (i - 1) * zm
+        ruler[i] = (math.floor((a + zm - 1) / unit) * unit >= a and math.floor((a + zm - 1) / unit) * unit <= a + zm - 1)
+                   and "|" or " "
+      end
+      out[#out + 1] = ("%-8s"):format("") .. table.concat(ruler) .. ("  (| = x divisible by %d)"):format(unit)
       local lo, hi
       for i, r in ipairs(rows) do
-        out[#out + 1] = ("z=%-6d"):format(area.z1 + i - 1) .. r
+        out[#out + 1] = ("z=%-6d"):format(area.z1 + (i - 1) * zm) .. r
       end
       if not y then
-        for z = area.z1, area.z2 do
-          for x = area.x1, area.x2 do
-            local sy = m.surface(x, z)
-            if sy then lo, hi = math.min(lo or sy, sy), math.max(hi or sy, sy) end
+        if area.ylo ~= nil or area.zoom ~= nil then   -- the map computed it (zoom-aware map.lua)
+          lo, hi = tonumber(area.ylo), tonumber(area.yhi)
+        else                                       -- older map.lua: one sample per character
+          for z = area.z1, area.z2, zm do
+            for x = area.x1, area.x2, zm do
+              local sy = m.surface(x, z)
+              if sy then lo, hi = math.min(lo or sy, sy), math.max(hi or sy, sy) end
+            end
           end
         end
         out[#out + 1] = lo and ("surface y in view: %d..%d"):format(lo, hi) or "no surface known in view"
       end
       out[#out + 1] = "legend: " .. legend
-      if area.x2 < x2 or area.z2 < z2 then out[#out + 1] = "(cut to 60 x 40: ask for the rest separately)" end
+      if area.x2 < x2 or area.z2 < z2 then
+        out[#out + 1] = ("(cut to 60 x 40 characters = %d x %d blocks: ask for the rest separately%s)")
+          :format(60 * zm, 40 * zm, zm < 16 and " or zoom out" or "")
+      end
     end
     local inView = {}
     for i, b in ipairs(m.protected().boxes) do

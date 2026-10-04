@@ -14,6 +14,12 @@ local map
 local okm, m = pcall(dofile, "/os/lib/map.lua")
 if okm and type(m) == "table" then map = m end
 W.map = map
+local log                                       -- debug log (/os/lib/log.lua), optional
+do
+  local okl, l = pcall(dofile, "/os/lib/log.lua")
+  if okl and type(l) == "table" then log = l end
+end
+W.log = log
 
 local seq = 3000000 + math.random(0, 99999) * 10   -- far from the Drones app, Claude and the pocket relay
 local lastPush = {}                             -- [drone id] = os.clock() of the last protect push
@@ -50,6 +56,14 @@ function W.flush()
 end
 
 function W.event(ev)
+  if log then
+    log.add("event", ev[1])
+    if ev[1] == "rednet_message" then
+      local msg = ev[3]
+      local drone = W.drones[ev[2]] ~= nil or (type(msg) == "table" and msg.kind == "turtle")
+      log.rednet(ev, { drone = drone or nil })
+    end
+  end
   if ev[1] == "rednet_message" and ev[4] == PROTO and type(ev[3]) == "table" then
     local from, msg = ev[2], ev[3]
     if msg.t == "status" and msg.kind == "turtle" and from ~= me then

@@ -34,9 +34,11 @@ local task, state = "manual", "ready"           -- what it is doing / ready, bus
 local pos, hasGps = nil, false
 local log = {}                                  -- newest first, what the drone did
 local dirty = true
-local job = nil                                 -- running task: { name, co, filter, builtin }
+local job = nil                                 -- running task: { name, co, filter, builtin, by, started, progress }
 local running = nil                             -- the job whose coroutine is executing right now
-local lastTask = nil                            -- { name, ok, info } of the last finished task
+local lastTask = nil                            -- { name, ok, info, by } of the last finished task
+local cmdBy = nil                               -- who sent the command being run: { id, who = "claude" | "player" }
+local lastBc = -100                             -- os.clock() of the last status broadcast
 
 local function clock()
   local t = os.time()
@@ -748,7 +750,21 @@ local function status()
     calibrated = origin ~= nil, abs = abs,
     origin = origin and { x = origin.x, y = origin.y, z = origin.z, f = origin.f } or nil,
     known = memN, safeDig = safeDig(), protectRev = type(cfg.protect) == "table" and tonumber(cfg.protect.rev) or 0,
+    by = job and job.by or nil,
+    taskTime = job and math.max(0, math.floor(os.clock() - job.started)) or nil,
+    progress = job and job.progress or nil,
   }
+end
+
+-- broadcast the status now
+local function bcast()
+  lastBc = os.clock()
+  rednet.broadcast(status(), PROTO)
+end
+
+-- while a task runs: broadcast the status (live progress) at most every second
+local function liveStatus()
+  if job and os.clock() - lastBc >= 1 and rednet.isOpen() then bcast() end
 end
 
 local function cut(s, n)
@@ -897,10 +913,10 @@ local function finish(j, ok, info, msg)
   if job ~= j then return end
   job = nil
   task, state = "manual", "ready"
-  lastTask = { name = j.name, ok = ok, info = cut(info or "", 200) }
+  lastTask = { name = j.name, ok = ok, info = cut(info or "", 200), by = j.by }
   note(cut(msg, 60))
   pcall(saveMem)
-  rednet.broadcast(status(), PROTO)
+  bcast()
 end
 
 local function say(...)
@@ -909,9 +925,11 @@ local function say(...)
   note(cut(table.concat(t, " "), 60))
 end
 
-local function startJob(name, fn, builtin)
+-- by: who started it ({ id, who }); default: the sender of the command being run
+local function startJob(name, fn, builtin, by)
   sensing = false                               -- a stopped trip never got to switch it off
-  job = { name = name, co = coroutine.create(fn), builtin = builtin }
+  job = { name = name, co = coroutine.create(fn), builtin = builtin, by = by or cmdBy, started = os.clock(),
+          progress = { phase = "working" } }
   task, state = name, "working"
   os.queueEvent("wardenos_task")
   return true, "started"
@@ -954,12 +972,16 @@ local function enter(step, trip)
       return false
     end
     local name = observe(side)
+    local prog = trip.progress
     if name == nil then                         -- can't inspect: try to dig blind
+      if prog then prog.phase = "digging" end
       if not dig() then mem[k] = mem[k] or "solid?" hard[k] = true return false end
     elseif name == "air" or enterable(name) then
       -- nothing (or only something replaceable) there but the move failed: a mob or player
       if waits < MOB_WAITS and trip.waits < MOB_BUDGET then
         waits, trip.waits = waits + 1, trip.waits + 1
+        if prog then prog.phase = "waiting" end
+        liveStatus()
         sleep(0.5)
       else
         temp[k] = now() + 20
@@ -967,9 +989,12 @@ local function enter(step, trip)
       end
     elseif temp[k] then                         -- another turtle (memSet blocked it for a while)
       return false
-    elseif not dig() then                       -- the dig rule refused, or it can't be dug
-      if not refusal({ name = name, tags = tagCache[name] }) then hard[k] = true end
-      return false
+    else
+      if prog then prog.phase = "digging" end
+      if not dig() then                         -- the dig rule refused, or it can't be dug
+        if not refusal({ name = name, tags = tagCache[name] }) then hard[k] = true end
+        return false
+      end
     end
   end
   hard[k] = true
@@ -977,23 +1002,35 @@ local function enter(step, trip)
 end
 
 -- follow A* paths to relative cell (tx, ty, tz), replanning when something new is in the way
+-- progress (status.progress of the running job): { phase = "planning" | "moving" | "digging" | "waiting" |
+-- "working", step, total, target = { x, y, z } (absolute when calibrated, else relative), replans }
 local function travel(tx, ty, tz, label)
-  local trip = { waits = 0, visits = {} }
+  local j = running or job
+  local tgt = origin and toAbs({ x = tx, y = ty, z = tz }) or { x = tx, y = ty, z = tz }
+  local prog = { phase = "planning", step = 0, total = 0, target = { x = tgt.x, y = tgt.y, z = tgt.z }, replans = 0 }
+  if j then j.progress = prog end
+  local trip = { waits = 0, visits = {}, progress = prog }
   local replans = 0
   local was = sensing
   sensing = true
   local ok, err = pcall(function()
     while nav.x ~= tx or nav.y ~= ty or nav.z ~= tz do
+      prog.phase = "planning"
+      liveStatus()
       local ctx = planCtx()
       ctx.visits = trip.visits
       local steps, why = findPath(nav, { x = tx, y = ty, z = tz }, { ctx = ctx })
       if not steps then
         error(why == "search limit" and ("no path to %s (search limit)"):format(label) or ("no path to " .. label), 0)
       end
-      for _, s in ipairs(steps) do
+      prog.total, prog.step = #steps, 0
+      for i, s in ipairs(steps) do
+        prog.phase, prog.step = "moving", i
+        liveStatus()
         -- sense - replan: something seen on the way made the next cell impassable
         if not cellCost(s.x, s.y, s.z, ctx) or not enter(s, trip) then
           replans = replans + 1
+          prog.replans = replans
           if replans > MAX_REPLANS then error("blocked at " .. here(), 0) end
           break
         end
@@ -1001,6 +1038,7 @@ local function travel(tx, ty, tz, label)
     end
   end)
   sensing = was
+  if j then j.progress = { phase = "working" } end
   if not ok then error(err, 0) end
   return true
 end
@@ -1028,10 +1066,10 @@ fuelGuard = function()
   killed[j.co] = true
   job = nil
   task, state = "manual", "ready"
-  lastTask = { name = j.name, ok = false, info = msg }
+  lastTask = { name = j.name, ok = false, info = msg, by = j.by }
   note(msg)
-  if homeSet then startJob("home", goHome, true) end
-  rednet.broadcast(status(), PROTO)
+  if homeSet then startJob("home", goHome, true, j.by) end
+  bcast()
   error(msg, 0)
 end
 
@@ -1151,9 +1189,9 @@ local function startTask(arg)
   local name = arg.name:sub(1, 32)
   local env = setmetatable({}, { __index = _G })
   env.print, env.write = say, say
-  env.report = function(...)
+  env.report = function(...)                    -- broadcasts at most every second (keeps rednet quiet)
     say(...)
-    rednet.broadcast(status(), PROTO)
+    if os.clock() - lastBc >= 1 then bcast() end
   end
   env.turtle = turtle
   env.whereAmI, env.face, env.moveTo, env.moveRel, env.pathTo = whereAmI, faceDir, moveTo, moveRel, pathTo
@@ -1313,13 +1351,15 @@ local function listen()
       elseif msg.t == "cmd" and msg.to == me and type(msg.cmd) == "string" then
         if not job then state = "busy" end
         dirty = true
+        cmdBy = { id = from, who = msg.by == "claude" and "claude" or "player" }   -- a task started now keeps it
         local ok, res, info = pcall(run, from, msg.cmd, msg.arg)
+        cmdBy = nil
         if not ok then info, res = res, false end  -- run() crashed: report the error
         state = job and "working" or "ready"
         note(cut(msg.cmd .. (res and " ok" or " failed") .. (info and (": " .. tostring(info)) or ""), 60))
         rednet.send(from, { t = "ack", seq = msg.seq, cmd = msg.cmd, ok = res and true or false,
                             info = info and tostring(info) or nil }, PROTO)
-        rednet.broadcast(status(), PROTO)
+        bcast()
         if res and msg.cmd == "update" then
           sleep(0.5)
           os.reboot()
@@ -1334,7 +1374,7 @@ local function beacon()
   while true do
     if modems() > 0 then
       if tick % 10 == 0 and not hasGps then locate(1) end       -- look for GPS every ~30s
-      rednet.broadcast(status(), PROTO)
+      bcast()
     end
     dirty = true
     tick = tick + 1
