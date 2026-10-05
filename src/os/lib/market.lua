@@ -88,8 +88,41 @@ end
 function M.encode(s)                              -- URL-encode a symbol / query (^IXIC -> %5EIXIC)
   return (tostring(s):gsub("[^%w%-%._~]", function(c) return ("%%%02X"):format(c:byte()) end))
 end
+-- futures contracts in trader notation -> Yahoo's codes: root + month letter + year, e.g.
+-- MNQZ2026 / MNQZ26 / MNQZ6 -> MNQZ26.CME ; GCZ2026 -> GCZ26.CMX ; CLF27 -> CLF27.NYM ; ZCZ26 -> ZCZ26.CBT
+local FUT_EXCHANGE = {
+  CBT = { "ZC", "ZS", "ZW", "ZM", "ZL", "ZB", "ZN", "ZF", "ZT", "TN", "UB", "YM", "MYM", "KE", "ZO", "ZR" },
+  NYM = { "CL", "MCL", "QM", "NG", "QG", "RB", "HO", "BZ", "PL", "PA" },
+  CMX = { "GC", "MGC", "SI", "SIL", "HG", "MHG", "QO", "QI" },
+}
+local FUT_EX = {}
+for ex, roots in pairs(FUT_EXCHANGE) do for _, r in ipairs(roots) do FUT_EX[r] = ex end end
+M.FUT_EX = FUT_EX
+
+function M.futures(s)                             -- "MNQZ2026" -> "MNQZ26", "MNQ", "Z", "26" (or nil)
+  s = tostring(s or ""):upper()
+  if s:find("[^%w]") then return nil end         -- already a Yahoo symbol (., =, ^, -) or something else
+  local root, month, year = s:match("^(%u[%u%d]?[%u%d]?[%u%d]?)([FGHJKMNQUVXZ])(%d+)$")
+  if not root or #year == 3 or #year > 4 then return nil end
+  if #year == 4 then
+    if year:sub(1, 2) ~= "20" then return nil end
+    year = year:sub(3)
+  elseif #year == 1 then                          -- MNQZ6: the next year ending in 6
+    local okd, y = pcall(os.date, "!%Y")
+    local cur = tonumber(okd and y) or 2026
+    local yy = cur - cur % 10 + tonumber(year)
+    if yy < cur then yy = yy + 10 end
+    year = tostring(yy):sub(3)
+  end
+  return root .. month .. year, root, month, year
+end
+
 function M.norm(s)                                -- user input -> symbol
   s = tostring(s or ""):gsub("^%s+", ""):gsub("%s+$", ""):upper()
+  local code, root = M.futures(s)
+  if code and #s >= #root + 2 then                -- looks like a futures contract (not a plain ticker)
+    return code .. "." .. (FUT_EX[root] or "CME")
+  end
   return s
 end
 function M.isCrypto(sym, q)
@@ -590,6 +623,15 @@ function M.search(text)
     if code == 429 or code == "backoff" or code == "nohttp" or code == "blocked" then break end
   end
   return nil, lastErr
+end
+local rawSearch = M.search
+function M.search(text)                           -- Yahoo finds "MNQZ26" but not "MNQZ2026": retry the short form
+  local list, err = rawSearch(text)
+  local code = M.futures(tostring(text or ""):gsub("%s", ""))
+  if list and #list == 0 and code and code ~= tostring(text):gsub("%s", ""):upper() then
+    list, err = rawSearch(code)
+  end
+  return list, err
 end
 
 ---------------------------------------------------------------- config (watchlist + settings)

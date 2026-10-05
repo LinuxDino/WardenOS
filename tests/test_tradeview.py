@@ -383,6 +383,24 @@ check([r["symbol"] for r in res] == ["AAPL", "APC.F", "AAPL.MX"] and res[0]["typ
       and res[0]["exch"] == "NASDAQ" and res[2]["name"] == "Apple Inc. (MX)" and res[2]["type"] == "EQUITY",
       "search parse: %s" % res)
 
+# futures in trader notation (seen in-game: "MNQz2026" found nothing) -> Yahoo's contract codes
+for given, want in [("MNQz2026", "MNQZ26.CME"), ("MNQZ26", "MNQZ26.CME"), ("mnqz26", "MNQZ26.CME"), ("NQH27", "NQH27.CME"),
+                    ("ESZ2026", "ESZ26.CME"), ("GCZ2026", "GCZ26.CMX"), ("CLF27", "CLF27.NYM"), ("ZCZ26", "ZCZ26.CBT"),
+                    ("MNQ=F", "MNQ=F"), ("MNQZ26.CME", "MNQZ26.CME"), ("AAPL", "AAPL"), ("BTC-USD", "BTC-USD"),
+                    ("^IXIC", "^IXIC"), ("F", "F"), ("NVDA", "NVDA"), ("GOOGL", "GOOGL")]:
+    got = env.call('return MK.norm(...)', given) if False else env.rt.eval("function(s) return MK.norm(s) end")(given)
+    check(got == want, "norm %s -> %s, want %s" % (given, got, want))
+FUT_SEARCH = json.dumps({"quotes": [{"symbol": "MNQZ26.CME", "shortname": "Micro E-mini Nasdaq-100 Index F",
+                                     "quoteType": "FUTURE", "exchDisp": "Chicago Mercantile Exchange", "typeDisp": "Futures"}]})
+env.rules = [(lambda u: "search?q=MNQZ2026&" in u, (200, json.dumps({"quotes": []}))),
+             (lambda u: "search?q=MNQZ26&" in u, (200, FUT_SEARCH))]
+res, err = env.call('return MK.search("MNQZ2026")')
+check(res and res[0]["symbol"] == "MNQZ26.CME" and "search?q=MNQZ26&" in env.reqs[-1]["url"],
+      "futures search fallback: %s %s" % (res and [r["symbol"] for r in res], env.reqs[-1]["url"]))
+env.rules = []
+d, err = env.call('return MK.chart("MNQz2026", "1D")')
+check("/v8/finance/chart/MNQZ26.CME?" in env.reqs[-1]["url"], "futures chart url: %s" % env.reqs[-1]["url"])
+
 # connection failure on query1 -> query2
 env.rules = [(lambda u: u.startswith("https://query1."), (0, ""))]
 d, err = env.call('return MK.chart("NVDA", "1D")')
