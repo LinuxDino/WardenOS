@@ -102,6 +102,11 @@ return {
     "os/lib/art.lua",
     "os/lib/cli.lua",
     "os/lib/store.lua",
+    "os/lib/gpsx.lua",
+    "os/gps/core.lua",
+    "os/gps/host.lua",
+    "os/gps/startup.lua",
+    "os/apps/gps.lua",
     "os/man/asciiquarium.txt",
     "os/man/banner.txt",
     "os/man/base64.txt",
@@ -161,6 +166,14 @@ return {
   drone = {
     "os/drone/agent.lua",
     "os/drone/startup.lua",
+  },
+  -- what a Warden GPS host gets (installer: "GPS host"; os/gps/startup.lua becomes /startup.lua on a dedicated host)
+  gps = {
+    "os/config.lua",
+    "os/lib/gpsx.lua",
+    "os/gps/core.lua",
+    "os/gps/host.lua",
+    "os/gps/startup.lua",
   },
   -- what an Advanced Pocket Computer gets (os/pocket/startup.lua becomes /startup.lua)
   pocket = {

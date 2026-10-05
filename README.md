@@ -10,6 +10,8 @@ built for modded Minecraft worlds.
   command the drones you give it, asking you first before anything risky
 - **Drones**: see every turtle and WardenOS computer on the network, live turtle status (task, fuel, position,
   inventory, activity log), remote control, homes and one-tap "call back"
+- **Warden GPS**: turn any computer into a GPS host from the installer; the **GPS** app checks your GPS setup,
+  gives tips and locates more accurately than `gps locate`
 - **Peripheral Inspector**: browse every attached or networked peripheral from any mod and see its methods
 - **Map**: the world as your drones have seen it, zoom from 1 to 16 blocks per character, protected areas
 - **Dashboard**: live cards for energy, fluids, inventories, Create stress/speed, AE2 / Refined Storage (via Advanced
@@ -29,7 +31,8 @@ built for modded Minecraft worlds.
 
 ## Install
 
-Needs an **Advanced Computer** and the CC: Tweaked `http` API enabled (it is by default).
+Needs an **Advanced Computer** and the CC: Tweaked `http` API enabled (it is by default). A standard computer
+can be a Warden GPS host (see GPS below).
 An Advanced Monitor is optional (at least 3x2 blocks recommended).
 
 From Pastebin ([pastebin.com/CeQfPV78](https://pastebin.com/CeQfPV78)), on a computer or a turtle:
@@ -104,15 +107,26 @@ Paired pockets are listed in `/os/pockets` on the computer. Rednet range is the 
 ## GPS (optional, recommended for drones)
 
 Drones work without GPS, but with it they find their world position by themselves (Drones > Use GPS).
+WardenOS has its own GPS host, **Warden GPS**: it answers normal `gps locate` like `gps host` does, and also
+reports to the **GPS** app.
 
-1. Build 4 computers with wireless (or ender) modems high up, e.g. around y = 200. They must not all be in one
-   flat plane: put A, B 5 blocks east of A, C 5 blocks south of A, and D 5 blocks above A.
-2. Look at each computer, press F3 and read "Targeted Block: x, y, z".
-3. On each one: `edit startup.lua`, write `shell.run("gps", "host", X, Y, Z)` with that computer's own
-   coordinates, save, reboot. Give each a label (`label set gps1`) so it keeps its program when broken.
-4. They must stay loaded (near your base, or with a chunk loader). Test anywhere with `gps locate`.
+1. Place 4 or more computers (a standard computer is enough) with a wireless or ender modem, high up
+   (around y = 200 is good). They must not all be in one flat plane: put A, B 5 blocks east of A, C 5 blocks
+   south of A, and D 5 blocks above A. A 5th host is a good spare.
+2. On each one run the installer: `pastebin run CeQfPV78 gps` (or `install gps`). On a standard computer it goes
+   straight to the GPS setup; on an Advanced Computer press **G** on the welcome screen. It detects the position
+   from hosts that already run, or you type it: look at **the computer**, press F3, read "Targeted Block".
+3. The host starts on every boot and shows its position and how many requests it answered. `install update`
+   updates it and keeps the position.
+4. The hosts must stay loaded (near your base, or with a chunk loader).
 
-Don't install WardenOS on the GPS computers; they only run `gps host`.
+A WardenOS desktop can be a GPS host too: run `install gps` on it and choose **B** (background). The desktop
+stays as it is and answers GPS while it runs (settings in `/os/gps/host.cfg`).
+
+The **GPS** app lists every host (Warden GPS and plain `gps host` ones), checks the constellation (at least 4,
+not flat, spread out, high up) with a grade and tips, shows your drones' GPS state, and **Locate** finds this
+computer more accurately than `gps locate`: several pings over every host in range, outliers rejected, and a
+host with wrong coordinates is named. Programs can use the same: `dofile("/os/lib/gpsx.lua").locate()`.
 
 ## Update
 
