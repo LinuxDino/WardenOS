@@ -12,7 +12,7 @@ return {
     term.setTextColor(WardenOS.theme.accent)
     print(WardenOS.name .. " terminal  (" .. os.version() .. ")")
     term.setTextColor(colors.lightGray)
-    print("try: neofetch, btop")
+    print("try: neofetch, btop, cowsay, apt list, man -k <word>")
     term.setTextColor(colors.white)
     if shell and shell.setPath and not (":" .. shell.path() .. ":"):find(":/os/bin:", 1, true) then
       shell.setPath(shell.path() .. ":/os/bin")      -- the new shell copies this path

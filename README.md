@@ -14,6 +14,8 @@ built for modded Minecraft worlds.
 - **Map**: the world as your drones have seen it, zoom from 1 to 16 blocks per character, protected areas
 - **Dashboard**: live cards for energy, fluids, inventories, Create stress/speed, AE2 / Refined Storage (via Advanced
   Peripherals), redstone, any peripheral method, plus drone and map stats
+- **App Store**: one-tap installs from GitHub: games (Snake, 2048, Minesweeper, Blocks, Warden Run) and tools
+  (Calculator, Stopwatch, Notes, Paint), plus terminal commands; also `apt install <pkg>` in the terminal
 - **MineView**: TradingView for your resources: candle charts per item (1m to 1d), produced vs used per period,
   watchlist with 1h change; records chests / barrels (also over wired modems) or AE2 / RS via Advanced Peripherals
 - **To-Do**: tasks with priorities (start with `!` or `!!`), tick them off, filters, saved on the computer
@@ -126,10 +128,21 @@ To install from another branch: `install <branch>` or `install update <branch>`.
 - With the desktop on the monitor, the keyboard still types into the active window.
 - `F12` exits to CraftOS. In the boot menu: arrows + Enter, `D` saves the default.
 
+## Look and feel
+
+The Warden greets you at boot (skip with any key), on the desktop wallpaper, at login and on the pocket. Every app
+has a pixel icon. The login has an **on-screen keyboard**, so you can type your name and password by tapping the
+monitor. Themes: dark, light and **sculk** (Settings > Theme).
+
 ## Terminal commands
 
-- `neofetch`: system info with the WardenOS logo.
-- `btop`: live stats (disk, events, rednet traffic, Claude calls, drones with fuel and tasks). `q` quits.
+Every command has a manual page: `man <command>`, or `man -k <word>` to search.
+
+- Everyday: `cat` `head` `tail` (`-f`) `grep` `wc` `touch` `tree` `du` `df` `free` `less` `sort` `rev` `seq` `factor`
+  `base64` `sha256sum` `echo` `yes` `which` `env` `pwd` `ps` `nano` `vim`
+- System: `uname -a` `whoami` `hostname` `uptime` `date` `cal` `neofetch` `btop` (`top`, `htop`) `ping <id|label>`
+  `ifconfig` / `ip` `sudo` `apt`
+- Fun: `cowsay -f warden` `fortune` `sl` `cmatrix` `asciiquarium` `hollywood` `lolcat` `figlet` `banner` `pacman`
 
 ## Display modes (Settings > Display)
 

@@ -18,3 +18,5 @@ jobs:
       - run: python3 tests/test_bin.py
       - run: python3 tests/test_mineview.py
       - run: python3 tests/test_todo.py
+      - run: python3 tests/test_store.py
+      - run: python3 tests/test_ui.py
