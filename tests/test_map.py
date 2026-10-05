@@ -384,6 +384,20 @@ check("0_0" in idx and "2_-3" in idx, "kernel: map not written on exit: %s" % so
 check("minecraft:stone" in fsk.get("/os/map/0_0", "") and "minecraft:oak_log" in fsk.get("/os/map/2_-3", ""),
       "kernel: chunk contents")
 check(env.M.violations == 0, "kernel: drew off-screen")
+# the game/server stops without a clean exit (no F12, no shutdown): the periodic flush must already have saved
+files = dict(DESK)
+env = Env(events=login + [["rednet_message", 12, {"t": "map", "obs": obs}, "wardenos"], ["host", "fsnap", "/os/map/index"]]
+          + [["timer", 900 + i] for i in range(8)], files=files, src=False)
+env.rt.execute("CLK = 0 os.clock = function() CLK = CLK + 1 return CLK end")   # every look at the clock: +1 s
+boot = env.rt.eval("function(src) local f = load(src, '=startup.lua', 't', _G) local ok, r = pcall(f) return ok, r end")
+ok, err = boot(env.fs()["/startup.lua"])
+fsk = env.fs()
+check("minecraft:stone" in fsk.get("/os/map/0_0", "") and "0_0" in fsk.get("/os/map/index", ""),
+      "map not saved before an unclean stop: %s" % sorted(k for k in fsk if k.startswith("/os/map")))
+# ... and a fresh boot (new Lua state) reads it back
+env2 = Env(files={k: v for k, v in fsk.items()}, src=True)
+got = env2.rt.eval("function() local m = dofile('/os/lib/map.lua') return m.get(5, 64, 5), m.get(40, 70, -40) end")()
+check(got == ("minecraft:stone", "minecraft:oak_log"), "map after restart: %s" % (got,))
 print("kernel hook: ok" if len(fail) == nfail else "kernel hook: FAILED")
 nfail = len(fail)
 
@@ -497,6 +511,16 @@ check("centered on drone #12" in sh.get("center16", "") and c16[zrow(200, 16) - 
 check("100,264" in hdr("scroll16"), "map zoom app: scroll at zoom 16 %r" % hdr("scroll16"))
 check(" x8 " in hdr("layer16") and "y=" in hdr("layer16") and " x4 " in hdr("layer4"), "map zoom app: layer + zoom %r %r"
       % (hdr("layer16"), hdr("layer4")))
+
+# the view survives a restart: the last center, zoom and layer are saved in /os/map/view and come back
+saved = env.fs().get("/os/map/view")
+sv = unser(saved) or {}
+check(sv.get("zoom") == 4 and sv.get("layer") is not None, "map view file %r" % saved)
+env = Env(CW=46, CH=17, files={"/os/map": True, "/os/map/view": saved}, events=[["host", "shot", "again"]])
+ok, err = env.run_app("/os/apps/map.lua", SEED)
+again = env.shots.get("again", "").split("\n")[0]
+check(err == "SCRIPT_END" and " x4 " in again and ("y=%d" % sv.get("layer", -999)) in again
+      and ("%d,%d" % (sv.get("cx", 0), sv.get("cz", 0))) in again, "map view restored %r %r" % (err, again))
 
 # empty map, no drones, no modem: still draws
 env = Env(CW=46, CH=17, modem=False, events=[["host", "shot", "empty"], ["host", "tap", 20, 8], ["host", "click", " Center "],

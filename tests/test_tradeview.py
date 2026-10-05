@@ -85,7 +85,7 @@ BASE = {"BTC-USD": 86000.0, "ETH-USD": 3200.0, "^IXIC": 27000.0, "^GSPC": 6600.0
         "NVDA": 180.0, "GC=F": 3900.0, "EURUSD=X": 1.12, "MSFT": 510.0, "APC.F": 285.0, "AAPL.MX": 6100.0}
 NAMES = {"BTC-USD": "Bitcoin USD", "ETH-USD": "Ethereum USD", "^IXIC": "NASDAQ Composite", "AAPL": "Apple Inc.",
          "EURUSD=X": "EUR/USD", "GC=F": "Gold Dec 26", "MSFT": "Microsoft Corporation", "APC.F": "Apple Inc."}
-STEP = {"5m": 300, "15m": 900, "1h": 3600, "1d": 86400, "1wk": 604800}
+STEP = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "1d": 86400, "1wk": 604800}
 COUNT = {"1d": 78, "5d": 120, "1mo": 22, "6mo": 126, "1y": 250, "5y": 260}
 
 
@@ -469,6 +469,46 @@ blk.rt.execute('http.request = function() return false, "Domain not permitted" e
 d, err = blk.call('return MK.chart("AAPL", "1D")')
 check(d is None and "Domain not permitted" in str(err), "blocked: %s" % err)
 
+# timeframes (TradeView): candle size -> Yahoo interval + range; 4h = 1h candles merged by 4
+env.rt.execute("CLOCK = CLOCK + 600")                 # past the 429 back-off above
+tfs = {"1m": ("1m", "1d"), "5m": ("5m", "5d"), "15m": ("15m", "5d"), "1h": ("1h", "1mo"), "4h": ("1h", "3mo"),
+       "D": ("1d", "1y"), "W": ("1wk", "5y")}
+for tf, (iv, yr) in tfs.items():
+    n0 = len(env.reqs)
+    d, err = env.call('return MK.chart("TFX", "%s")' % tf)
+    url = env.reqs[n0]["url"] if len(env.reqs) > n0 else ""
+    check(url == "https://query1.finance.yahoo.com/v8/finance/chart/TFX?interval=%s&range=%s" % (iv, yr),
+          "timeframe %s: %s" % (tf, url))
+    if tf == "4h":
+        cds = d and d["candles"] or []
+        check(cds and all(c["t"] % 14400 == 0 for c in cds) and len(cds) < expected_candles("TFX", yr),
+              "4h candles not merged: %d" % len(cds))
+        check(all(cds[i]["t"] < cds[i + 1]["t"] for i in range(len(cds) - 1)), "4h candles out of order")
+    else:
+        check(d and len(d["candles"]) == expected_candles("TFX", yr), "timeframe %s: candles %s" % (tf, d and len(d["candles"])))
+check(env.call('return MK.label("D"), MK.label("W"), MK.label("15m"), MK.fresh("1m"), MK.fresh("5m"), MK.fresh("1h")', 6)
+      == ("1D", "1W", "15m", 30, 30, 60), "labels / fresh")
+g = env.call('return MK.group({ {t=0,o=1,h=2,l=0.5,c=1.5,v=1}, {t=3600,o=1.5,h=3,l=1,c=2,v=2}, '
+             '{t=14400,o=2,h=2.5,l=1.8,c=2.2,v=4} }, 14400)', 1)
+check(len(g) == 2 and g[0] == {"t": 0, "o": 1, "h": 3, "l": 0.5, "c": 2, "v": 3} and g[1]["o"] == 2, "group: %s" % g)
+# 1m charts are fresh for 30 s only: asked again after 31 s, not after 20 s
+env.call('return MK.chart("TFZ", "D")')
+env.call('return MK.chart("TFZ", "1m")')
+n0 = len(env.reqs)
+env.rt.execute("CLOCK = CLOCK + 20")
+env.call('return MK.chart("TFZ", "1m")')
+env.call('return MK.chart("TFZ", "D")')
+check(len(env.reqs) == n0, "1m / D asked again within 20 s")
+env.rt.execute("CLOCK = CLOCK + 11")
+env.call('return MK.chart("TFZ", "1m")')
+env.call('return MK.chart("TFZ", "D")')
+check(len(env.reqs) == n0 + 1 and "interval=1m" in env.reqs[-1]["url"], "1m not refreshed after 31 s: %s"
+      % [r["url"] for r in env.reqs[n0:]])
+# a 5-day chart's price has no day change: it must not count as a fresh quote
+env.call('return MK.chart("TFY", "5m")')
+n0 = len(env.reqs)
+env.call('return MK.quotes({ "TFY" })')
+check(len(env.reqs) == n0 + 1 and "/spark?symbols=TFY" in env.reqs[-1]["url"], "quote of a 5m chart counted as fresh")
 # formatting
 fmt = env.call('return MK.price(86133.354), MK.price(1.120437), MK.price(0.054321), MK.big(1234567), MK.big(987), '
                'MK.big(2.5e9), MK.pct(1.0559), MK.pct(-0.4), MK.change(-380.03, 86133), MK.compact(86133.35, 6), '
@@ -478,7 +518,13 @@ check(fmt == ("86133.35", "1.1204", "0.05432", "1.23M", "987", "2.50B", "+1.06%"
 # config: default watchlist, saved + loaded
 c = env.call("return MK.loadConfig()", 1)
 check([w["s"] for w in c["watch"]] == ["BTC-USD", "ETH-USD", "^IXIC", "^GSPC", "^DJI", "AAPL", "NVDA", "GC=F", "EURUSD=X"]
-      and c["range"] == "1D" and c["mode"] == "candles", "default config: %s" % c)
+      and c["range"] == "5m" and c["mode"] == "candles", "default config: %s" % c)
+# a config saved by an older version (ranges) opens on the matching timeframe
+for old, new in (("1D", "5m"), ("5D", "1h"), ("6M", "D"), ("5Y", "W"), ("15m", "15m"), ("bogus", "5m")):
+    env.call('local f = fs.open("/os/tradeview/config", "w") f.write(textutils.serialize({ watch = {}, range = "%s" })) '
+             'f.close() return true' % old)
+    got = env.call("return MK.loadConfig().range", 1)
+    check(got == new, "old config range %s -> %s, want %s" % (old, got, new))
 check(not env.problems, "library: %s" % env.problems[:3])
 print("market library: ok" if len(fail) == nf else "market library: FAILED")
 
@@ -486,7 +532,7 @@ print("market library: ok" if len(fail) == nf else "market library: FAILED")
 # ================================================================ 2. app
 def app_events(lw, wide):
     ev = [["host", "shot", "start"]]
-    for r in ("5D", "1M", "6M", "1Y", "5Y", "1D"):
+    for r in ("1m", "15m", "1h", "4h", "1D", "1W", "5m"):
         ev += [["host", "click", " %s " % r], ["host", "shot", "r-" + r]]
     ev += [["host", "click", " Line "], ["host", "shot", "line"], ["host", "click", " Candle "], ["host", "shot", "candle"]]
     ev += [["host", "at", -12, 8], ["host", "shot", "cross"], ["host", "at", 5, 2], ["host", "shot", "uncross"]]
@@ -514,7 +560,7 @@ for (cw, ch) in [(45, 17), (45, 18), (51, 20), (79, 36), (158, 79)]:
     check(not env.problems, "%s: %s" % (tag, env.problems[:2]))
     s = sh.get("start", "")
     rows = s.split("\n")
-    for label in (" 1D ", " 5D ", " 1M ", " 6M ", " 1Y ", " 5Y ", " Line ", " Search "):
+    for label in (" 1m ", " 5m ", " 15m ", " 1h ", " 4h ", " 1D ", " 1W ", " Line ", " Search "):
         check(label in rows[0], "%s: toolbar misses %r: %r" % (tag, label, rows[0]))
     check("Bitcoin" in rows[1] and "BTC-USD" in rows[1] and "%" in rows[1] and re.search(r"\d+\.\d\d", rows[1]),
           "%s: header:\n%s" % (tag, s))
@@ -528,13 +574,14 @@ for (cw, ch) in [(45, 17), (45, 18), (51, 20), (79, 36), (158, 79)]:
     check("d" in bg and "e" in bg, "%s: candles not green and red" % tag)
     check("|" in "".join(b[2] for b in env.blits.get("start", [])), "%s: no wicks" % tag)
     first = [r["url"] for r in env.reqs[:2]]
-    check(any("/chart/BTC-USD?interval=5m&range=1d" in u for u in first) and any("/spark?" in u for u in first),
+    check(any("/chart/BTC-USD?interval=5m&range=5d" in u for u in first) and any("/spark?" in u for u in first),
           "%s: first requests: %s" % (tag, first))
-    for rng, iv in (("5D", "1h"), ("1M", "1d"), ("6M", "1d"), ("1Y", "1d"), ("5Y", "1wk")):
+    for rng, iv, yr in (("1m", "1m", "1d"), ("15m", "15m", "5d"), ("1h", "1h", "1mo"), ("4h", "1h", "3mo"),
+                        ("1D", "1d", "1y"), ("1W", "1wk", "5y"), ("5m", "5m", "5d")):
         sr = sh.get("r-" + rng, "")
-        check("error" not in sr and "Bitcoin" in sr.split("\n")[1] and ("%s " % rng) in sr.split("\n")[2],
-              "%s: range %s:\n%s" % (tag, rng, sr))
-        yr = {"5D": "5d", "1M": "1mo", "6M": "6mo", "1Y": "1y", "5Y": "5y"}[rng]
+        rows_r = sr.split("\n")
+        check("error" not in sr and len(rows_r) > 3 and "Bitcoin" in rows_r[1] and ("%s " % rng) in rows_r[2]
+              and "%" in rows_r[1], "%s: timeframe %s:\n%s" % (tag, rng, sr))
         check(any(r["url"].endswith("BTC-USD?interval=%s&range=%s" % (iv, yr)) for r in env.reqs), "%s: no %s request" % (tag, rng))
     lb = env.blits.get("line", [])
     check(" Candle " in sh.get("line", "").split("\n")[0] and lb and "|" not in "".join(b[2] for b in lb),
@@ -559,7 +606,7 @@ for (cw, ch) in [(45, 17), (45, 18), (51, 20), (79, 36), (158, 79)]:
     rm = sh.get("removed", "")
     check(" + " in rm.split("\n")[3] and not env.call("return MK.inWatch(MK.loadConfig(), 'APC.F')", 1),
           "%s: remove from the watchlist:\n%s" % (tag, rm))
-    check(any(r["url"].endswith("/chart/APC.F?interval=5m&range=1d") for r in env.reqs), "%s: APC.F chart not fetched" % tag)
+    check(any(r["url"].endswith("/chart/APC.F?interval=5m&range=5d") for r in env.reqs), "%s: APC.F chart not fetched" % tag)
     n_before = len([r for r in env.reqs if "/spark?" in r["url"]])
     check(n_before >= 2, "%s: auto-refresh did not refresh quotes (%d spark requests)" % (tag, n_before))
     check(all("User-Agent" in r["headers"] for r in env.reqs), "%s: a request without User-Agent" % tag)
@@ -621,6 +668,9 @@ for (w, h) in [(51, 19), (26, 20)]:
     bl = "".join(b for b in [])
     check(ok and res is True and "BTC-USD" in out and "1Y " in out and env.M.violations == 0
           and env.reqs and env.reqs[-1]["url"].endswith("BTC-USD?interval=1d&range=1y"), "%s -c:\n%s" % (tag, out))
+    env, ok, res, out = ticker("-c", "BTC-USD", "1m", w=w, h=h)            # small m = minutes, 1M = a month
+    check(ok and res is True and env.reqs and env.reqs[-1]["url"].endswith("BTC-USD?interval=1m&range=1d"),
+          "%s -c 1m:\n%s" % (tag, out))
     env, ok, res, out = ticker("--help", w=w, h=h)
     check(ok and "Usage: ticker" in out and "-s" in out and "-c" in out and not env.reqs and env.M.violations == 0,
           "%s --help:\n%s" % (tag, out))

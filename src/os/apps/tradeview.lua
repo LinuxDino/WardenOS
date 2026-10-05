@@ -1,8 +1,8 @@
 -- TradeView: a little trading terminal for real markets (stocks, indices, crypto, forex, gold) on an in-game
 -- computer. Data: Yahoo Finance (unofficial, delayed; Kraken for crypto when Yahoo fails) through /os/lib/market.lua.
--- Left: watchlist (price, change %). Main: candles or line/area chart, ranges 1D..5Y, tap for the crosshair
+-- Left: watchlist (price, change %). Main: candles or line/area chart, timeframes 1m..1W, tap for the crosshair
 -- (time, O H L C, volume), scroll / arrow keys to pan, "1:1" / "fit" zoom, Search (type) to find and add symbols.
--- A worker coroutine fetches while the screen stays live; auto-refresh every 60 s; cached data opens offline.
+-- A worker coroutine fetches while the screen stays live; auto-refresh every 30 s (1m, 5m) or 60 s; cached data opens offline.
 local floor, max, min = math.floor, math.max, math.min
 
 return {
@@ -71,7 +71,7 @@ return {
     local function refresh()
       lastAuto = MK.now()
       queue({ k = "chart", s = sel, r = range })
-      if #cfg.watch > 0 then queue({ k = "quotes" }) end
+      queue({ k = "quotes" })
     end
     local function show(sym)
       if sym ~= sel then sel, offset, cross, zoom = sym, 0, nil, false end
@@ -91,7 +91,9 @@ return {
               local _, err = MK.chart(j.s, j.r)
               errs[j.s .. "|" .. j.r] = err
             elseif j.k == "quotes" then
-              local _, err = MK.quotes(symbols())
+              local list = symbols()
+              if not MK.inWatch(cfg, sel) then list[#list + 1] = sel end   -- the open chart's price too
+              local _, err = MK.quotes(list, MK.fresh(range))
               quoteErr = err
             elseif j.k == "search" then
               local res, err = MK.search(j.q)
@@ -131,16 +133,19 @@ return {
       return out
     end
     local function timeFmt(long)
-      if range == "1D" then return long and "%a %d.%m %H:%M" or "%H:%M" end
-      if range == "5D" then return long and "%a %d.%m %H:%M" or "%d.%m" end
-      if range == "5Y" then return long and "%d.%m.%Y" or "%m/%y" end
+      if range == "1m" or range == "5m" or range == "1D" then return long and "%a %d.%m %H:%M" or "%H:%M" end
+      if range == "15m" or range == "1h" or range == "4h" or range == "5D" then
+        return long and "%a %d.%m %H:%M" or "%d.%m"
+      end
+      if range == "W" or range == "5Y" then return long and "%d.%m.%Y" or "%m/%y" end
       return long and "%a %d.%m.%Y" or "%d.%m"
     end
 
     ------------------------------------------------ toolbar, header, status, footer
     local function drawToolbar()
       fill(1, 1, W, 1, T.panel)
-      local need = #MK.RANGES * 4 + 8 + 8
+      local need = 8 + 8
+      for _, r in ipairs(MK.RANGES) do need = need + #MK.label(r) + 2 end
       local x = 1
       if W - need >= 10 then
         put(2, 1, W - need >= 16 and "TradeView" or "Trade", T.accent, T.panel)
@@ -150,7 +155,7 @@ return {
       end
       for _, r in ipairs(MK.RANGES) do
         local on = r == range
-        x = button(x, 1, r, function()
+        x = button(x, 1, MK.label(r), function()
           if range ~= r then range, offset, cross, zoom = r, 0, nil, false save() end
           queue({ k = "chart", s = sel, r = range })
         end, on and T.bg or T.text, on and T.accent or T.panel)
@@ -241,7 +246,7 @@ return {
       if d and #d.candles > 1 and x <= W - 9 then  -- change over the shown range
         local a, b = d.candles[1].o, d.candles[#d.candles].c
         if a and a ~= 0 then
-          local s = range .. " " .. MK.pct((b - a) / a * 100)
+          local s = MK.label(range) .. " " .. MK.pct((b - a) / a * 100)
           if x + #s <= W then put(W - #s + 1, 3, s, upColor(b - a)) end
         end
       end
@@ -542,7 +547,7 @@ return {
         if e == "timer" then
           if a == timer then timer = os.startTimer(busy and 0.5 or 5) end
           spin = spin + 1
-          if MK.now() - lastAuto >= MK.FRESH * 1000 then refresh() end
+          if MK.now() - lastAuto >= MK.fresh(range) * 1000 then refresh() end
           render()
         elseif e == "tradeview_done" or e == "tradeview_busy" then
           render()

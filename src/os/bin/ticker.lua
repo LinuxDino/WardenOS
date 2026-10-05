@@ -103,7 +103,7 @@ return cli.main({
   about = "Delayed market prices from Yahoo Finance: price, change and change % in color. Without symbols it "
     .. "shows your TradeView watchlist. Symbols as on Yahoo: AAPL, BTC-USD, ^IXIC (NASDAQ), ^GSPC, GC=F (gold), "
     .. "EURUSD=X. For fun, not financial advice.",
-  options = { "-s text   search for a symbol by name", "-c SYM [range]  mini chart; range 1D 5D 1M 6M 1Y 5Y",
+  options = { "-s text   search for a symbol by name", "-c SYM [range]  mini chart; 1D 5D 1M 6M 1Y 5Y or 1m..4h",
               "--help    show this help" },
   flags = { s = true, c = true }, long = { search = "s", chart = "c" },
   run = function(o, args)
@@ -133,8 +133,9 @@ return cli.main({
     if o.c then
       local sym = args[1] and MK.norm(args[1])
       if not sym or sym == "" then cli.fail("usage: ticker -c SYMBOL [range]") end
-      local range = (args[2] or "1D"):upper()
-      if not MK.RANGE[range] then cli.fail("range must be one of 1D 5D 1M 6M 1Y 5Y") end
+      local range = args[2] or "1D"
+      if not MK.RANGE[range] then range = range:upper() end   -- 1m = minutes, 1M = month
+      if not MK.RANGE[range] then cli.fail("range must be one of 1D 5D 1M 6M 1Y 5Y or 1m 5m 15m 1h 4h") end
       cli.print(("loading %s %s..."):format(sym, range), colors.lightGray)
       local d, err = MK.chart(sym, range)
       if not d or #d.candles == 0 then cli.fail(tostring(err or "no data")) end
@@ -143,10 +144,11 @@ return cli.main({
       mini(MK, d, w, math.max(3, math.min(10, h - 8)))
       local a, b = d.candles[1], d.candles[#d.candles]
       local off = d.quote and d.quote.gmtoffset or 0
-      local fmt = (range == "1D" or range == "5D") and "%d.%m %H:%M" or "%d.%m.%Y"
+      local intraday = range == "1D" or range == "5D" or ({ ["1m"] = 1, ["5m"] = 1, ["15m"] = 1, ["1h"] = 1, ["4h"] = 1 })[range]
+      local fmt = intraday and "%d.%m %H:%M" or "%d.%m.%Y"
       cli.print(("%s .. %s"):format(MK.date(a.t, fmt, off), MK.date(b.t, fmt, off)), colors.lightGray)
       local chg = a.o ~= 0 and (b.c - a.o) / a.o * 100 or 0
-      cli.print(("%s %s"):format(range, MK.pct(chg)), chg >= 0 and colors.green or colors.red)
+      cli.print(("%s %s"):format(MK.label(range), MK.pct(chg)), chg >= 0 and colors.green or colors.red)
       if err then cli.print(("(cached, %s old: %s)"):format(MK.age(d.age), err), colors.yellow) end
       if d.source == "kraken" then cli.print("(via Kraken)", colors.lightGray) end
       return true

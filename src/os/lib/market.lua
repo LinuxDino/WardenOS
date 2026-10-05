@@ -2,7 +2,8 @@
 -- no key, delayed), Kraken public OHLC as a fallback for crypto. Must run inside a coroutine that gets events
 -- (an app, a program): requests wait with os.pullEvent, like /os/lib/claude.lua.
 --
---   M.chart(symbol, range)   -> data | nil, err   range: "1D" "5D" "1M" "6M" "1Y" "5Y"
+--   M.chart(symbol, range)   -> data | nil, err   range = a timeframe (candle size, what TradeView shows):
+--       "1m" "5m" "15m" "1h" "4h" "D" "W", or a span: "1D" "5D" "1M" "6M" "1Y" "5Y" (ticker -c)
 --       data = { symbol, range, interval, candles = { { t, o, h, l, c, v }, ... }, quote = q, source, fetched,
 --                age (s), stale = true + err when it is cached data because the network failed }
 --   M.quotes({ symbol, ... }) -> { [symbol] = q }, err      one request for the whole list (Yahoo spark)
@@ -29,8 +30,19 @@ M.CONFIG = M.DIR .. "/config"
 M.MAX_FILES = 12             -- charts kept on disk (~15 KB each at most)
 M.MAX_CANDLES = 400
 
-M.RANGES = { "1D", "5D", "1M", "6M", "1Y", "5Y" }
+M.SPANS = { "1D", "5D", "1M", "6M", "1Y", "5Y" }
+M.RANGES = { "1m", "5m", "15m", "1h", "4h", "D", "W" }   -- TradeView's timeframes (one candle = ...)
 M.RANGE = {                  -- Yahoo range + interval, Kraken interval (minutes), seconds shown
+  -- timeframes: label on the button, cache file name (save folders can ignore case: 1m vs 1M), seconds fresh,
+  -- group = Yahoo candles merged into one (Yahoo has no 4h)
+  ["1m"] = { range = "1d", interval = "1m", kraken = 1, span = 86400, label = "1m", file = "m1", fresh = 30 },
+  ["5m"] = { range = "5d", interval = "5m", kraken = 5, span = 5 * 86400, label = "5m", file = "m5", fresh = 30 },
+  ["15m"] = { range = "5d", interval = "15m", kraken = 15, span = 5 * 86400, label = "15m", file = "m15" },
+  ["1h"] = { range = "1mo", interval = "1h", kraken = 60, span = 31 * 86400, label = "1h", file = "h1" },
+  ["4h"] = { range = "3mo", interval = "1h", kraken = 240, span = 92 * 86400, label = "4h", file = "h4", group = 4 },
+  ["D"] = { range = "1y", interval = "1d", kraken = 1440, span = 366 * 86400, label = "1D", file = "d1" },
+  ["W"] = { range = "5y", interval = "1wk", kraken = 10080, span = 5 * 366 * 86400, label = "1W", file = "w1" },
+  -- spans (older versions, ticker -c): how far back
   ["1D"] = { range = "1d", interval = "5m", kraken = 5, span = 86400 },
   ["5D"] = { range = "5d", interval = "1h", kraken = 60, span = 5 * 86400 },
   ["1M"] = { range = "1mo", interval = "1d", kraken = 1440, span = 31 * 86400 },
@@ -221,6 +233,29 @@ end
 ---------------------------------------------------------------- parsing (defensive: nulls, missing fields)
 local function arr(v) v = tab(v) return v or {} end
 
+function M.label(range) local r = M.RANGE[range] return r and r.label or tostring(range) end
+function M.fresh(range) local r = M.RANGE[range] return (r and r.fresh) or M.FRESH end
+local function isDay(range)                       -- today's candles only: the chart knows the previous close
+  if range == nil then return true end
+  local r = M.RANGE[range]
+  return r ~= nil and r.range == "1d"
+end
+M.isDay = isDay
+-- candles -> one candle per `secs` (UTC-aligned buckets), for timeframes Yahoo doesn't have
+function M.group(cds, secs)
+  local out, cur = {}, nil
+  for _, c in ipairs(cds) do
+    local b = math.floor(c.t / secs) * secs
+    if cur and cur.t == b then
+      cur.h, cur.l, cur.c, cur.v = math.max(cur.h, c.h), math.min(cur.l, c.l), c.c, cur.v + (c.v or 0)
+    else
+      cur = { t = b, o = c.o, h = c.h, l = c.l, c = c.c, v = c.v or 0 }
+      out[#out + 1] = cur
+    end
+  end
+  return out
+end
+
 function M.marketState(meta)
   if str(meta.marketState) then return meta.marketState:lower() end
   if meta.instrumentType == "CRYPTOCURRENCY" then return "24/7" end
@@ -240,7 +275,7 @@ function M.quoteFromMeta(meta, candles, range)
   local price = num(meta.regularMarketPrice) or (last and last.c)
   if not price then return nil end
   local prev = num(meta.previousClose)
-  if not prev and (range == "1D" or range == nil) then prev = num(meta.chartPreviousClose) end
+  if not prev and isDay(range) then prev = num(meta.chartPreviousClose) end
   local change, pct
   if prev and prev ~= 0 then
     change = price - prev
@@ -408,7 +443,10 @@ local function unpackCandles(s)
   end
   return out
 end
-local function cacheFile(sym, range) return ("%s/%s_%s"):format(M.CACHE, M.encode(sym):gsub("%%", "_"), range) end
+local function cacheFile(sym, range)
+  local r = M.RANGE[range]
+  return ("%s/%s_%s"):format(M.CACHE, (M.encode(sym):gsub("%%", "_")), r and r.file or range)
+end
 local function cleanQuote(q)
   if type(q) ~= "table" then return nil end
   local o = {}
@@ -511,7 +549,7 @@ function M.chart(sym, range, opts)
   local G = S()
   local key = sym .. "|" .. range
   local cached = G.mem[key] or loadDisk(sym, range)
-  if cached and not cached.stale and not opts.force and now() - (cached.fetched or 0) < M.FRESH * 1000 then
+  if cached and not cached.stale and not opts.force and now() - (cached.fetched or 0) < M.fresh(range) * 1000 then
     return withAge(cached)
   end
   local r = M.RANGE[range]
@@ -522,9 +560,11 @@ function M.chart(sym, range, opts)
     if body then
       local cds, q = M.parseChart(body, range)
       if cds then
+        if r.group then cds = M.group(cds, r.group * 3600) end
         local d = { symbol = sym, range = range, interval = r.interval, candles = cds, quote = q, source = "yahoo",
                     fetched = now() }
-        if range == "1D" or not G.quotes[sym] then setQuote(sym, q) saveQuotes() end
+        if isDay(range) then setQuote(sym, q) saveQuotes()
+        elseif not G.quotes[sym] then setQuote(sym, q, 0) end   -- a price to show, no day change: not fresh
         G.mem[key] = d
         saveDisk(d)
         return withAge(d)
@@ -545,14 +585,14 @@ function M.chart(sym, range, opts)
     if cds and #cds > 0 then
       cds = trimSpan(cds, range)
       local first, last = cds[1], cds[#cds]
-      local prev = range == "1D" and first.o or nil
+      local prev = isDay(range) and last.t - first.t >= 20 * 3600 and first.o or nil
       local q = { symbol = sym, name = (G.quotes[sym] and G.quotes[sym].name) or sym, price = last.c, prev = prev,
                   currency = sym:match("%-(%u+)$") or "USD", type = "CRYPTOCURRENCY", exchange = "Kraken", state = "24/7",
                   gmtoffset = 0 }
       if prev and prev ~= 0 then q.change = last.c - prev q.pct = q.change / prev * 100 end
       local d = { symbol = sym, range = range, interval = r.interval, candles = cds, quote = q, source = "kraken",
                   fetched = now() }
-      if range == "1D" then setQuote(sym, q) saveQuotes() end
+      if prev then setQuote(sym, q) saveQuotes() elseif not G.quotes[sym] then setQuote(sym, q, 0) end
       G.mem[key] = d
       saveDisk(d)
       return withAge(d), errs[1]
@@ -568,14 +608,14 @@ function M.chart(sym, range, opts)
   return nil, msg
 end
 
-function M.quotes(list)
+function M.quotes(list, maxAge)
   loadQuotes()
   local G = S()
   local want, errs = {}, nil
   for _, s in ipairs(list or {}) do
     s = M.norm(s)
     local q = G.quotes[s]
-    if not (q and q.fetched and now() - q.fetched < M.FRESH * 1000) then want[#want + 1] = s end
+    if not (q and q.fetched and now() - q.fetched < (maxAge or M.FRESH) * 1000) then want[#want + 1] = s end
   end
   local i = 1
   while i <= #want do                             -- up to 10 symbols per request
@@ -636,7 +676,7 @@ end
 
 ---------------------------------------------------------------- config (watchlist + settings)
 function M.loadConfig()
-  local c = { watch = {}, range = "1D", mode = "candles" }
+  local c = { watch = {}, range = "5m", mode = "candles" }
   local d = textutils.unserialize(readFile(M.CONFIG) or "")
   if type(d) == "table" and type(d.watch) == "table" then
     for _, w in ipairs(d.watch) do
@@ -648,7 +688,9 @@ function M.loadConfig()
     for i, w in ipairs(M.DEFAULT_WATCH) do c.watch[i] = { s = w.s, n = w.n } end
   end
   if type(d) == "table" then
-    if M.RANGE[d.range] then c.range = d.range end
+    local old = { ["1D"] = "5m", ["5D"] = "1h", ["1M"] = "D", ["6M"] = "D", ["1Y"] = "D", ["5Y"] = "W" }
+    if old[d.range] then c.range = old[d.range]                       -- saved by an older version
+    elseif M.RANGE[d.range] then c.range = d.range end
     if d.mode == "line" then c.mode = "line" end
     if type(d.sel) == "string" then c.sel = d.sel end
   end

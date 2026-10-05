@@ -74,17 +74,36 @@ return {
       return m
     end
 
-    -- start: on a drone, else on the chunk with the most blocks
+    -- start where the player left off (/os/map/view); the first time on a drone, else the most-mapped chunk
+    local VIEWFILE = "/os/map/view"
+    local savedView
     do
-      local t = targets()[1]
-      if t then
-        cx, cz = math.floor(t[2]), math.floor(t[3])
+      local f = fs.exists(VIEWFILE) and fs.open(VIEWFILE, "r")
+      local v = f and textutils.unserialize(f.readAll())
+      if f then f.close() end
+      if type(v) == "table" and tonumber(v.cx) and tonumber(v.cz) then
+        cx, cz, zoom = math.floor(v.cx), math.floor(v.cz), map.zoom(tonumber(v.zoom) or 1)
+        layer = tonumber(v.layer)
+        savedView = v
       else
-        local best, n = nil, 0
-        for k, c in pairs(map.chunks()) do if c > n then best, n = k, c end end
-        local a, b = best and best:match("^(%-?%d+)_(%-?%d+)$")
-        if a then cx, cz = tonumber(a) * 16 + 8, tonumber(b) * 16 + 8 end
+        local t = targets()[1]
+        if t then cx, cz = math.floor(t[2]), math.floor(t[3])
+        else
+          local best, n = nil, 0
+          for k, c in pairs(map.chunks()) do if c > n then best, n = k, c end end
+          local a, b
+          if best then a, b = best:match("^(%-?%d+)_(%-?%d+)$") end
+          if a then cx, cz = tonumber(a) * 16 + 8, tonumber(b) * 16 + 8 end
+        end
       end
+    end
+    local function saveView()                     -- small file, written only when the view changed
+      local v = savedView
+      if v and v.cx == cx and v.cz == cz and v.zoom == zoom and v.layer == layer then return end
+      savedView = { cx = cx, cz = cz, zoom = zoom, layer = layer }
+      if not fs.isDir("/os/map") then pcall(fs.makeDir, "/os/map") end
+      local f = fs.open(VIEWFILE, "w")
+      if f then f.write(textutils.serialize(savedView)) f.close() end
     end
 
     ------------------------------------------------ drawing helpers
@@ -324,6 +343,7 @@ return {
 
     ------------------------------------------------ render + loop
     local function render()
+      saveView()
       local parent = term.current()
       local w, h = parent.getSize()
       local buf = window.create(parent, 1, 1, w, h, false)

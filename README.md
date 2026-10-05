@@ -18,7 +18,7 @@ built for modded Minecraft worlds.
   (Calculator, Stopwatch, Notes, Paint), plus terminal commands; also `apt install <pkg>` in the terminal
 - **MineView**: TradingView for your resources: candle charts per item (1m to 1d), produced vs used per period,
   watchlist with 1h change; records chests / barrels (also over wired modems) or AE2 / RS via Advanced Peripherals
-- **TradeView**: real markets (stocks, indices, crypto, gold, forex) with candles or line chart (1D to 5Y), crosshair,
+- **TradeView**: real markets (stocks, indices, crypto, gold, forex) with candles or line chart (timeframes 1m 5m 15m 1h 4h 1D 1W), crosshair,
   watchlist and search; delayed Yahoo Finance data, also `ticker BTC-USD ^IXIC` in the terminal. Not financial advice
 - **To-Do**: tasks with priorities (start with `!` or `!!`), tick them off, filters, saved on the computer
 - **System Monitor**: overview plus debug pages: network traffic, all drones, Claude API calls, error log, disk

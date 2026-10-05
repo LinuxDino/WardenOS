@@ -13,7 +13,8 @@ DESCRIPTION
 
 OPTIONS
   -s text         search for a symbol by name or ticker
-  -c SYM [range]  draw a small chart; range is 1D 5D 1M 6M 1Y or 5Y (default 1D)
+  -c SYM [range]  draw a small chart; range is 1D 5D 1M 6M 1Y or 5Y (default 1D),
+                  or a candle size: 1m 5m 15m 1h 4h (small m = minutes)
   --help          show the usage
 
 EXAMPLES
