@@ -228,7 +228,7 @@ for (CW, CH, MW, MH) in [(51, 19, 0, 0), (51, 19, 57, 24), (51, 19, 164, 81), (5
         check(any("9911" in b for b in bl), "%s %s: dock icons not drawn with art" % (tag, theme))
         if theme == "dark":
             W = len(desk[0])
-            check(any(len(b) >= W - 6 for b in bl), "%s: no wallpaper rows" % tag)
+            check("art.wallpaper(" not in read("src/os/kernel.lua"), "%s: the desktop draws a background pattern again" % tag)
             check(any("933" in b for b in bl), "%s: no Warden art on the desktop" % tag)
         check("About" in env.shots.get("win", ""), "%s %s: About window missing" % (tag, theme))
         env.offscreen("%s %s" % (tag, theme))

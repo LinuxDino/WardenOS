@@ -302,12 +302,7 @@ end
 local CLOCKW = 17                               -- bigfont width of "12:30"
 local function drawDesktop()
   local x0, ww, hh = DW + 1, W - DW, H - 1
-  if art then                                   -- sculk wallpaper, recolored for the theme
-    local p, light = art.hex(T.panel), T.bg == colors.white
-    art.wallpaper(out, x0, 2, ww, hh, T.bg, { ["7"] = p, ["9"] = p })
-  else
-    fill(out, x0, 2, ww, hh, T.bg)
-  end
+  fill(out, x0, 2, ww, hh, T.bg)               -- plain background: just the Warden and the clock on it
   -- the Warden and the big clock: the biggest arrangement that fits (only one of them on small screens)
   local L
   for _, c in ipairs({ { "large", "stack" }, { "large", "side" }, { "medium", "stack" }, { "medium", "side" },

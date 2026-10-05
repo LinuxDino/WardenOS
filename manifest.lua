@@ -2,7 +2,7 @@
 -- Add every new OS file here (tests/check.py verifies this list matches src/).
 -- Bump version together with src/os/config.lua and src/os/drone/agent.lua.
 return {
-  version = "1.7.0",
+  version = "1.7.1",
   files = {
     "startup.lua",
     "os/config.lua",
