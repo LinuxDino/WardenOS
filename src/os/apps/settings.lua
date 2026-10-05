@@ -122,6 +122,7 @@ return {
       put(2, y, "Color theme", T.text)
       option(y + 1, "Dark", s.theme == "dark", function() s.theme = "dark" save() end, w)
       option(y + 2, "Light", s.theme == "light", function() s.theme = "light" save() end, w)
+      option(y + 3, "Sculk  (deep dark, teal glow)", s.theme == "sculk", function() s.theme = "sculk" save() end, w)
     end
 
     function pages.Dock(y, w, h)

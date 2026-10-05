@@ -114,6 +114,7 @@ local function loadApps()
 end
 loadApps()
 local function appInfo(id) return apps[id] or ghosts[id] end
+WardenOS.wins = wins                            -- read-only view for tools (ps): .title, .app, .min
 
 ---------------------------------------------------------------- state + theme
 local menuOpen, appView, moving, running = false, false, nil, true
@@ -303,7 +304,7 @@ local function drawDesktop()
   local x0, ww, hh = DW + 1, W - DW, H - 1
   if art then                                   -- sculk wallpaper, recolored for the theme
     local p, light = art.hex(T.panel), T.bg == colors.white
-    art.wallpaper(out, x0, 2, ww, hh, T.bg, { ["7"] = p, ["6"] = light and p or "6", ["9"] = light and p or "6" })
+    art.wallpaper(out, x0, 2, ww, hh, T.bg, { ["7"] = p, ["9"] = p })
   else
     fill(out, x0, 2, ww, hh, T.bg)
   end
@@ -718,6 +719,7 @@ local function onTouch(x, y)
       elseif it.act == "settings" then open("settings")
       elseif it.act == "logout" then
         wins, moving, appView, toast = {}, nil, false, nil
+        WardenOS.wins = wins
         user = doLogin()
         clockTimer = os.startTimer(1)
       elseif it.act == "exit" then running = false

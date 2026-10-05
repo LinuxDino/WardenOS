@@ -252,9 +252,21 @@ local font   = use("/os/lib/bigfont.lua")
 local sha    = use("/os/lib/sha256.lua")
 local screen = use("/os/lib/screen.lua")
 
+local art                                       -- Warden pixel art (optional: a manifest without it still works)
+if FILES["/os/lib/art.lua"] then
+  local oka, m = pcall(use, "/os/lib/art.lua")
+  if oka and type(m) == "table" then art = m end
+end
+
 -- common-size mirrored display (computer + monitor), nothing gets cropped
 local S = screen.open(29, 13, "right")
 local W, H = S.W, S.H
+do                                              -- the dark WardenOS palette (undone by S.close)
+  local okc, c = pcall(use, "/os/config.lua")
+  if okc and type(c) == "table" and type(c.themes) == "table" and c.themes.dark and S.palette then
+    S.palette(c.themes.dark.palette)
+  end
+end
 
 local function at(x, y, s, fg, bg)
   term.setCursorPos(x, y)
@@ -305,10 +317,14 @@ end
 local function header(step, title)
   clr()
   at(1, 1, string.rep(" ", W), colors.white, colors.gray)
-  at(2, 1, "WardenOS Setup", colors.white, colors.gray)
+  at(2, 1, "\4", colors.cyan, colors.gray)
+  at(4, 1, "WardenOS Setup", colors.white, colors.gray)
   local s = ("step %d/%d"):format(step, STEPS)
   at(W - #s, 1, s, colors.lightGray, colors.gray)
+  local bw = math.floor(W * step / STEPS)           -- progress line under the bar
+  at(1, 2, string.rep(" ", W), colors.white, colors.black)
   at(2, 3, title:sub(1, W - 2), colors.cyan)
+  if bw > 0 then at(1, 2, string.rep("_", bw), colors.cyan, colors.black) end
 end
 local function footer(s)
   at(1, H, string.rep(" ", W), colors.lightGray, colors.black)
@@ -316,6 +332,18 @@ local function footer(s)
 end
 
 local function logo(y)
+  if art and W >= 41 and H >= 18 then              -- the Warden next to the WARDEN wordmark
+    local a = art.get("warden", "medium")
+    local x = math.floor((W - (a.w + 3 + font.width("WARDEN"))) / 2) + 1
+    art.draw(term, "warden", "medium", x, y)
+    font.draw(term, "WARDEN", x + a.w + 3, y + math.floor((a.h - 5) / 2), colors.cyan)
+    return y + a.h + 1
+  end
+  if art and H >= 16 then                           -- the Warden alone
+    local a = art.get("warden", "small")
+    art.draw(term, "warden", "small", math.floor((W - a.w) / 2) + 1, y)
+    return y + a.h + 1
+  end
   if H >= 16 then
     font.draw(term, "WARDEN", math.floor((W - font.width("WARDEN")) / 2) + 1, y, colors.cyan)
     return y + 7

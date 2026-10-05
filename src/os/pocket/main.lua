@@ -3,6 +3,11 @@
 --   local mode      the pocket talks to drones itself and runs Claude with its own API key
 -- Needs a wireless or ender modem upgrade for anything on the network (rednet protocol "wardenos").
 local OS = dofile("/os/config.lua")
+local art                                       -- /os/lib/art.lua (Warden + icons); optional
+do
+  local ok, m = pcall(dofile, "/os/lib/art.lua")
+  if ok and type(m) == "table" then art = m end
+end
 local PROTO = "wardenos"
 local CONF = "/os/pocket/config"
 local ONLINE = 10                               -- seconds: a drone that reported since then is online
@@ -357,7 +362,15 @@ local function back(to) return function() go(to) end end
 local function drawSetup()
   header("WardenOS Pocket")
   put(2, 3, "Welcome!", T.accent)
-  local y = para(4, "How should this pocket computer work?", T.text) + 1
+  local y
+  if art and W >= 24 then                        -- the Warden at the right, the question beside it
+    art.draw(native, "warden", "small", W - 8, 3)
+    y = 4
+    for _, l in ipairs(wrap("How should this pocket computer work?", W - 12)) do put(2, y, l, T.text) y = y + 1 end
+    y = math.max(y, 8) + 1
+  else
+    y = para(4, "How should this pocket computer work?", T.text) + 1
+  end
   y = tile(y, { { "Connect to a WardenOS computer" }, { "(recommended)", T.good } }, function()
     serversBack = "setup"                       -- the mode is saved once pairing works
     go("servers")
@@ -407,13 +420,20 @@ local function openTerminal()
   screen = "terminal"
 end
 
+-- home: the Warden with a greeting, then the four sections as app tiles (icon, name, status)
+local HOME_ICONS = {
+  drones   = { { "    ", "0000", "8ff8" }, { "    ", "0000", "8888" } },
+  claude   = { { "\\||/", "1111", "7117" }, { "/||\\", "1111", "7117" } },
+  terminal = { { ">_  ", "9000", "ffff" }, { "    ", "0000", "8888" } },
+  settings = { { "-O--", "8088", "7777" }, { "--O-", "8808", "7777" } },
+}
 local function drawHome()
   header("WardenOS Pocket")
   local items = {
-    { "(T)", "Drones", colors.orange, function() go("drones") end },
-    { " * ", "Claude", colors.orange, function() go("claude") end },
-    { ">_", "Terminal", T.accent, openTerminal },
-    { "[=]", "Settings", T.dim, function() go("settings") end },
+    { "(T)", "Drones", colors.orange, function() go("drones") end, HOME_ICONS.drones },
+    { " * ", "Claude", colors.orange, function() go("claude") end, HOME_ICONS.claude },
+    { ">_", "Terminal", T.accent, openTerminal, HOME_ICONS.terminal },
+    { "[=]", "Settings", T.dim, function() go("settings") end, HOME_ICONS.settings },
   }
   local dinfo
   if not rednet.isOpen() then dinfo = "no modem"
@@ -421,14 +441,31 @@ local function drawHome()
   else dinfo = onlineCount() .. " online" end
   local info = { dinfo, claudeInfo(), "shell", "" }
   local y = 3
+  if art then                                   -- greeting
+    art.draw(native, "warden", "small", 2, 3)
+    put(12, 4, OS.name or "WardenOS", T.accent)
+    put(12, 5, ("Pocket " .. tostring(OS.version)):sub(1, W - 12), T.dim)
+    put(12, 6, ("#" .. me .. " " .. (os.getComputerLabel() or "")):sub(1, W - 12), T.dim)
+    y = 9
+  end
+  local tw = math.floor((W - 3) / 2)
+  local th = art and 4 or 3
   for i, it in ipairs(items) do
-    fill(y, 3, T.panel, 2, W - 2)
-    put(3, y + 1, it[1], it[3], T.panel)
-    put(7, y + 1, it[2], T.text, T.panel)
-    local s = info[i]:sub(1, W - 18)
-    put(W - 1 - #s, y + 1, s, T.dim, T.panel)
-    zone(2, y, W - 2, 3, it[4])
-    y = y + 4
+    local col, row = (i - 1) % 2, math.floor((i - 1) / 2)
+    local x, ty = 2 + col * (tw + 1), y + row * (th + 1)
+    fill(ty, th, T.panel, x, tw)
+    local s = info[i]:sub(1, tw - 2)
+    if art then
+      local ix = x + math.floor((tw - 4) / 2)
+      if not art.icon(native, { art = it[5] }, ix, ty, T.panel) then put(ix, ty, it[1], it[3], T.panel) end
+      put(x + math.floor((tw - #it[2]) / 2), ty + 2, it[2], T.text, T.panel)
+      put(x + math.floor((tw - #s) / 2), ty + 3, s, T.dim, T.panel)
+    else
+      put(x + 1, ty, it[1], it[3], T.panel)
+      put(x + 1, ty + 1, it[2], T.text, T.panel)
+      put(x + 1, ty + 2, s, T.dim, T.panel)
+    end
+    zone(x, ty, tw, th, it[4])
   end
   local line
   if connected() then
@@ -816,7 +853,9 @@ local function drawSettings()
   fg, bg = pick(conf.theme == "dark")
   x = button(2, 10, "Dark", function() conf.theme = "dark" saveConf() applyTheme() end, fg, bg)
   fg, bg = pick(conf.theme == "light")
-  button(x, 10, "Light", function() conf.theme = "light" saveConf() applyTheme() end, fg, bg)
+  x = button(x, 10, "Light", function() conf.theme = "light" saveConf() applyTheme() end, fg, bg)
+  fg, bg = pick(conf.theme == "sculk")
+  button(x, 10, "Sculk", function() conf.theme = "sculk" saveConf() applyTheme() end, fg, bg)
 
   button(2, 12, "Update WardenOS", function() exitAction, running = "update", false end)
   button(2, 14, "Exit to CraftOS", function() running = false end)
