@@ -288,6 +288,7 @@ function fs.open(p, mode)
   local dir = fs.getDir(p)
   if dir ~= "" and FS["/" .. dir] ~= true then return nil, "No such directory" end
   local buf = {}
+  if mode == "a" and type(FS[p]) == "string" then buf[1] = FS[p] end   -- append: keep what is there
   return { write = function(s) buf[#buf + 1] = tostring(s) end, close = function() FS[p] = table.concat(buf) end }
 end
 

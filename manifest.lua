@@ -2,7 +2,7 @@
 -- Add every new OS file here (tests/check.py verifies this list matches src/).
 -- Bump version together with src/os/config.lua and src/os/drone/agent.lua.
 return {
-  version = "1.5.2",
+  version = "1.6.0",
   files = {
     "startup.lua",
     "os/config.lua",
@@ -15,6 +15,7 @@ return {
     "os/lib/log.lua",
     "os/lib/login.lua",
     "os/lib/map.lua",
+    "os/lib/mineview.lua",
     "os/lib/pocketserver.lua",
     "os/lib/screen.lua",
     "os/lib/settings.lua",
@@ -29,10 +30,12 @@ return {
     "os/apps/files.lua",
     "os/apps/lua.lua",
     "os/apps/map.lua",
+    "os/apps/mineview.lua",
     "os/apps/monitoring.lua",
     "os/apps/peripherals.lua",
     "os/apps/settings.lua",
     "os/apps/terminal.lua",
+    "os/apps/todo.lua",
     "os/bin/btop.lua",
     "os/bin/neofetch.lua",
     "os/drone/agent.lua",

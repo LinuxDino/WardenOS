@@ -244,7 +244,8 @@ ids = [f[len("os/apps/"):-4] for f in listed if f.startswith("os/apps/")]
 orders = {i: int(re.search(r"order = (\d+)", read("src/os/apps/%s.lua" % i)).group(1)) for i in ids}
 ids.sort(key=lambda i: (orders[i], i))
 k = ids.index("drones")
-tx, ty = 8 + (k % 3) * 12, 4 + (k // 3) * 4
+tile_h = 4 if 3 * ((19 - 2) // 4) >= len(ids) else 1   # kernel app view: compact 1-row tiles when 3-row ones don't fit
+tx, ty = 8 + (k % 3) * 12, 4 + (k // 3) * tile_h
 app_h = int(re.search(r"h = (\d+)", read("src/os/apps/drones.lua")).group(1))
 wx, wy = 8, max(2, min(3, 19 - min(app_h, 18) + 1))    # first spawn spot; content row r = screen row wy + r
 rt, M = new_env(51, 19, 0, 0, [], [], pc)

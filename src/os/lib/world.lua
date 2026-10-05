@@ -1,7 +1,9 @@
 -- WardenOS world sync, run by the kernel (every call is pcall-protected there):
 --   W.event(ev)    every event: caches turtle status messages, stores {t="map"} observations in the world map,
 --                  sends the protected areas to drones of this computer that have an old copy, flushes the map
---   W.flush()      write the map now (the kernel calls it on exit)
+--   W.flush()      write the map and MineView's history now (the kernel calls it on exit)
+--   W.mineview     the MineView sampler (/os/lib/mineview.lua), shared as WardenOS.mineview: it gets every event
+--                  and samples the storage in its own coroutine (never blocks this handler)
 --   W.drones       [id] = latest turtle status + seen (os.clock()); shared as WardenOS.drones with the apps,
 --                  the pocket server and Claude
 local PROTO = "wardenos"
@@ -20,6 +22,19 @@ do
   if okl and type(l) == "table" then log = l end
 end
 W.log = log
+local mineview                                  -- MineView sampler (optional, never breaks the world sync)
+do
+  local okv, mv = pcall(dofile, "/os/lib/mineview.lua")
+  if okv and type(mv) == "table" and type(mv.new) == "function" then
+    local oki, inst = pcall(mv.new, {})
+    if oki and type(inst) == "table" then
+      mineview = inst
+      local G = rawget(_G, "WardenOS")
+      if type(G) == "table" then G.mineview = inst end
+    end
+  end
+end
+W.mineview = mineview
 
 local seq = 3000000 + math.random(0, 99999) * 10   -- far from the Drones app, Claude and the pocket relay
 local lastPush = {}                             -- [drone id] = os.clock() of the last protect push
@@ -50,9 +65,14 @@ local function onStatus(from, msg)
   end
 end
 
-function W.flush()
+local function flushMap()
   lastFlush = os.clock()
   if map then map.flush() end
+end
+
+function W.flush()
+  flushMap()
+  if mineview then pcall(mineview.flush, true) end
 end
 
 function W.event(ev)
@@ -72,7 +92,8 @@ function W.event(ev)
       map.add(msg.obs)
     end
   end
-  if os.clock() - lastFlush >= FLUSH_EVERY then W.flush() end
+  if mineview then pcall(mineview.event, ev) end
+  if os.clock() - lastFlush >= FLUSH_EVERY then flushMap() end
 end
 
 -- for tests

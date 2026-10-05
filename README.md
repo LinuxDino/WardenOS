@@ -14,6 +14,9 @@ built for modded Minecraft worlds.
 - **Map**: the world as your drones have seen it, zoom from 1 to 16 blocks per character, protected areas
 - **Dashboard**: live cards for energy, fluids, inventories, Create stress/speed, AE2 / Refined Storage (via Advanced
   Peripherals), redstone, any peripheral method, plus drone and map stats
+- **MineView**: TradingView for your resources: candle charts per item (1m to 1d), produced vs used per period,
+  watchlist with 1h change; records chests / barrels (also over wired modems) or AE2 / RS via Advanced Peripherals
+- **To-Do**: tasks with priorities (start with `!` or `!!`), tick them off, filters, saved on the computer
 - **System Monitor**: overview plus debug pages: network traffic, all drones, Claude API calls, error log, disk
 - **Lua Console**, **Terminal** (full CraftOS shell, with `btop` and `neofetch`), **Files**, **Editor**
 - Dark and light theme, login with salted + hashed passwords
