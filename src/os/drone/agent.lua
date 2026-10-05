@@ -1391,16 +1391,16 @@ end
 -- Mining jobs walk every third layer and dig the layers above and below from there. They never dig what the
 -- dig rule refuses (they skip it and say so), go home to unload into the chest there when the inventory is
 -- full (or drop junk first with drop_junk), and come back to where they started.
-local JUNK = {}
+-- (one table: the agent's main chunk is near Lua's limit of 200 locals)
+local JOBS = { junk = {}, containers = { "chest", "barrel", "shulker_box", "hopper", "drawer", "crate" },
+               drop = { front = "drop", up = "dropUp", down = "dropDown" },
+               pside = { front = "front", up = "top", down = "bottom" } }
 for _, n in ipairs { "minecraft:cobblestone", "minecraft:cobbled_deepslate", "minecraft:dirt", "minecraft:gravel",
                      "minecraft:netherrack", "minecraft:tuff", "minecraft:granite", "minecraft:diorite",
                      "minecraft:andesite", "minecraft:calcite", "minecraft:sand", "minecraft:blackstone",
                      "minecraft:basalt", "minecraft:stone", "minecraft:deepslate" } do
-  JUNK[n] = true
+  JOBS.junk[n] = true
 end
-local CONTAINERS = { "chest", "barrel", "shulker_box", "hopper", "drawer", "crate" }
-local DROP = { front = "drop", up = "dropUp", down = "dropDown" }
-local PSIDE = { front = "front", up = "top", down = "bottom" }
 
 local function freeSlots()
   local n = 0
@@ -1413,10 +1413,12 @@ local function findContainer()
   for _, side in ipairs { "front", "down", "up" } do
     local name = peek(side)
     if name and name ~= "air" then
-      for _, c in ipairs(CONTAINERS) do
+      for _, c in ipairs(JOBS.containers) do
         if name:find(c, 1, true) then return side, name end
       end
-      local ok, inv = pcall(function() return peripheral.hasType and peripheral.hasType(PSIDE[side], "inventory") end)
+      local ok, inv = pcall(function()
+        return peripheral.hasType and peripheral.hasType(JOBS.pside[side], "inventory")
+      end)
       if ok and inv then return side, name end
     end
   end
@@ -1427,7 +1429,7 @@ end
 local function unloadHere(keepFuel)
   local side, name = findContainer()
   if not side then return nil, "no chest at home: put a chest in front of, above or below the home spot" end
-  local drop = turtle[DROP[side]]
+  local drop = turtle[JOBS.drop[side]]
   if not drop then return nil, "this turtle can't drop items " .. side end
   local sel, moved, left, kept = turtle.getSelectedSlot(), 0, 0, false
   for i = 1, 16 do
@@ -1452,7 +1454,7 @@ local function dropJunk()
   local sel, n = turtle.getSelectedSlot(), 0
   for i = 1, 16 do
     local d = turtle.getItemDetail(i)
-    if d and JUNK[d.name] then
+    if d and JOBS.junk[d.name] then
       turtle.select(i)
       if turtle.drop() then n = n + 1 end
     end
@@ -1834,7 +1836,8 @@ local function run(from, cmd, arg)
     return startQuarry(arg)
   elseif cmd == "unload" then
     if not homeSet then return false, "no home set" end
-    return startJob("unload", function() return unloadJob(not (type(arg) == "table" and arg.keep_fuel == false)) end, false)
+    local keep = not (type(arg) == "table" and arg.keep_fuel == false)
+    return startJob("unload", function() return unloadJob(keep) end, false)
   elseif cmd == "mapdata" then
     return mapData(arg)
   elseif cmd == "calibrate" then

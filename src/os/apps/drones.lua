@@ -222,8 +222,11 @@ return {
             by == "claude" and T.accent or T.warn)
       elseif type(d.lastTask) == "table" then
         local lb = type(d.lastTask.by) == "table" and (d.lastTask.by.who == "claude" and " - by Claude" or " - by you") or ""
-        put(1, 2, ("Last: %s %s%s"):format(tostring(d.lastTask.name), d.lastTask.ok and "ok" or "failed", lb):sub(1, w),
-            d.lastTask.ok and T.dim or T.bad)
+        -- a failed task says why (no path, not enough fuel, inventory full...)
+        local lt = d.lastTask
+        local why = not lt.ok and lt.info and lt.info ~= "" and (": " .. tostring(lt.info)) or ""
+        put(1, 2, ("Last: %s %s%s%s"):format(tostring(lt.name), lt.ok and "ok" or "failed", lb, why):sub(1, w),
+            lt.ok and T.dim or T.bad)
       end
       local tline = tostring(d.task) .. " (" .. tostring(d.state) .. ")"
       local tg = by and type(p.target) == "table" and tonumber(p.target.x) and p.target

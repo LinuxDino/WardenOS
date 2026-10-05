@@ -14,7 +14,7 @@ URL = "https://api.anthropic.com/v1/messages"
 CW, CH = 48, 18
 ENTER = 28
 TOOL_NAMES = {"run_lua", "list_files", "read_file", "write_file", "list_peripherals", "call_peripheral",
-              "network_scan", "drone_command", "drone_task", "drone_status", "drone_scan",
+              "network_scan", "drone_command", "drone_task", "drone_status", "drone_scan", "drone_goto", "drone_job",
               "map_view", "map_find", "map_info", "protect_area", "drone_send_map",
               "template_save", "template_list", "template_run"}
 BODY_KEYS = {"model", "max_tokens", "system", "tools", "messages", "output_config", "fallbacks", "cache_control"}
@@ -716,6 +716,59 @@ def goto_mapdata():
     return pr
 
 
+def goto_job_tools():
+    # drone_goto / drone_job: send the command (map first), then wait for the task's result (lastTask.n = ack.job)
+    def done(n, ok, info):
+        return ["rednet_message", 12, {"t": "status", "kind": "turtle", "owner": 7, "task": "manual", "state": "ready",
+                                       "fuel": 880, "calibrated": True, "abs": {"x": 8, "y": 65, "z": 8, "f": 2},
+                                       "lastTask": {"name": "x", "n": n, "ok": ok, "info": info}}, "wardenos"]
+    allow = ["host", "click", " Allow "]
+    env = Env(typed("go") + [allow, ["host", "ack"], ["host", "ackjob", 3], done(2, True, "old task"),
+                             done(3, True, "arrived 8 65 8"),
+                             allow, ["host", "ackjob", 4], done(4, False, "tunnel 5 x 1 x 2: mined nothing; protected"),
+                             allow, ["host", "ackjob", None, True, "fuel 500 (+100)"],
+                             allow, ["host", "ackjob", 6],
+                             allow, ["host", "ackjob", None, False, "not enough fuel: needs about 90, has 10; bring 1 coal"]],
+              [reply([tool_use("g1", "drone_goto", {"x": 8, "y": 65, "z": 8})], "tool_use"),
+               reply([tool_use("j1", "drone_job", {"job": "tunnel", "length": 5, "direction": 1})], "tool_use"),
+               reply([tool_use("j2", "drone_job", {"job": "refuel", "fuel_target": 500})], "tool_use"),
+               reply([tool_use("g2", "drone_goto", {"home": True, "wait_seconds": 0})], "tool_use"),
+               reply([tool_use("g3", "drone_goto", {"x": 1, "y": 2, "z": 3, "rel": True})], "tool_use"),
+               reply([text("ok")])],
+              modem=True, prelude='rednet.open("back")\n' + GIVE_12 + SEED_MAP)
+    env.hosts["ack"] = last_cmd_ack(env, info="101 blocks")
+
+    def ackjob(job, ok=True, info="started"):
+        m = [x for x in env.sent() if x.msg.t == "cmd"][-1]
+        a = {"t": "ack", "seq": m.msg.seq, "cmd": m.msg.cmd, "ok": ok, "info": info}
+        if job is not None:
+            a["job"] = job
+        return ["rednet_message", m.to, a, "wardenos"]
+    env.hosts["ackjob"] = ackjob
+    env.run()
+    pr, b = env.problems, env.bodies
+    cmds = [x for x in env.sent() if x.msg.t == "cmd"]
+    expect(pr, [c.msg.cmd for c in cmds] == ["mapdata", "goto", "tunnel", "refuel", "home", "goto"],
+           "sent %r" % [c.msg.cmd for c in cmds])
+    if len(cmds) == 6:
+        expect(pr, cmds[1].msg.arg.x == 8 and cmds[1].msg.by == "claude", "goto arg")
+        expect(pr, cmds[2].msg.arg.length == 5 and cmds[2].msg.arg.dir == 1 and cmds[2].msg.arg.width is None, "tunnel arg")
+        expect(pr, cmds[3].msg.arg == 500, "refuel arg %r" % cmds[3].msg.arg)
+        expect(pr, cmds[5].msg.arg.rel is True and cmds[5].msg.arg.z == 3, "rel goto arg")
+    if len(b) != 6:
+        return pr + ["%d requests" % len(b)]
+    r = [results(b, i)[0] for i in range(1, 6)]
+    expect(pr, r[0]["content"].startswith("done: arrived 8 65 8") and "now at 8 65 8 facing south, fuel 880" in r[0]["content"]
+           and "sent 101 known blocks" in r[0]["content"] and not r[0]["is_error"], "goto result %r" % r[0])
+    expect(pr, r[1]["content"].startswith("FAILED: tunnel 5 x 1 x 2: mined nothing") and r[1]["is_error"], "tunnel %r" % r[1])
+    expect(pr, r[2]["content"] == "ok: fuel 500 (+100)" and not r[2]["is_error"], "refuel %r" % r[2])
+    expect(pr, r[3]["content"].startswith("started (task 6)") and not r[3]["is_error"], "home %r" % r[3])
+    expect(pr, r[4]["content"].startswith("failed: not enough fuel") and r[4]["is_error"], "fuel refusal %r" % r[4])
+    system = b[0]["system"][0]["text"]
+    expect(pr, "drone_goto" in system and "drone_job" in system and "Plan before acting" in system, "system prompt")
+    return pr
+
+
 def status_fields():
     d = {"t": "status", "kind": "turtle", "label": "digger", "task": "manual", "state": "ready", "fuel": 400,
          "fuelLimit": 20000, "fuelItems": 7, "calibrated": True, "abs": {"x": 10, "y": 70, "z": -5, "f": 3},
@@ -912,6 +965,7 @@ SCENARIOS = [("a plain chat + exact history echo", plain_chat), ("b tool loop, A
                  ("k5 goto sends the map first; protect command refused", goto_mapdata),
                  ("k6 drone_status: abs, home, coal, safe dig", status_fields),
                  ("k7 options: all my drones", options_all),
+                 ("k8 drone_goto / drone_job wait for the task result", goto_job_tools),
                  ("l1 activity: by=claude, live drone line, cleared when done", activity),
                  ("l2 activity: failed command, lines", activity_fail_lines),
                  ("l3 map_view zoom (+ an old map.lua)", map_zoom)]
