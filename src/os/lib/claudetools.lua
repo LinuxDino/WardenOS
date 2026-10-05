@@ -32,7 +32,7 @@ local K = {}
 local LIVE = 10                                 -- seconds: a drone status newer than this is current
 local TASK_KEEP, CMD_KEEP = 600, 120            -- seconds an entry stays without a running task
 local TALK_STALE = 900                          -- a conversation that has not reported for this long is gone
-local TASK_CMDS = { run = true, ["goto"] = true, home = true }
+local TASK_CMDS = { run = true, ["goto"] = true, home = true, tunnel = true, quarry = true, unload = true }
 
 function K.activity()
   local W = rawget(_G, "WardenOS")
@@ -140,11 +140,11 @@ local function toolList(withMap, withTemplates)
       description = "Find WardenOS computers and drones (turtles) on the rednet network, with drone status: task, fuel, position, owner, inventory, recent activity.",
       input_schema = obj() },
     { name = "drone_command", risky = true,
-      description = "Send one command to one of your drones and wait for the result. Commands: forward, back, up, down, turnLeft, turnRight, dig, digUp, digDown, place, placeUp, placeDown, suck, drop, refuel, select (arg = slot 1-16), locate, label (arg = name), stop (cancels the running task), home (drive back home, runs as a task), sethome (this spot and facing become home), calibrate (arg = {x=, y=, z=, facing=} the drone's CURRENT absolute position and facing 0-3 from the player's F3 screen; no arg = use GPS), scan (look around, see drone_scan), safedig (arg = true: only natural blocks may be dug, the default; false: any block outside protected areas), goto (arg = {x=, y=, z=} absolute, or {x=, y=, z=, rel=true} relative to home, optional face= 0-3: travels there by itself with pathfinding, as a task; the computer first sends the drone its map of the route). Use goto for any travel instead of single moves.",
+      description = "Send one command to one of your drones and wait for the result. Commands: forward, back, up, down, turnLeft, turnRight, dig, digUp, digDown, place, placeUp, placeDown, suck, drop, refuel, select (arg = slot 1-16), locate, label (arg = name), stop (cancels the running task), home (drive back home, runs as a task), sethome (this spot and facing become home), calibrate (arg = {x=, y=, z=, facing=} the drone's CURRENT absolute position and facing 0-3 from the player's F3 screen; no arg = use GPS), scan (look around, see drone_scan), safedig (arg = true: only natural blocks may be dug, the default; false: any block outside protected areas), goto (arg = {x=, y=, z=} absolute, or {x=, y=, z=, rel=true} relative to home, optional face= 0-3: travels there by itself with pathfinding, as a task). For travel and mining use drone_goto and drone_job instead: they wait for the result.",
       input_schema = obj({ id = INT("drone ID; optional if you have exactly one drone"),
                            command = { type = "string" }, arg = { description = "optional argument" } }, { "command" }) },
     { name = "drone_task", risky = true,
-      description = "Start a task on one of your drones: Lua code that runs ON THE TURTLE by itself, so the drone works on its own while you and the player watch. The code has the normal turtle API (turtle.forward(), turtle.dig(), turtle.inspect(), turtle.getItemDetail(), ...), sleep, os, peripheral, and helpers: whereAmI(), face(dir), moveTo(x, y, z), moveRel(x, y, z), pathTo(x, y, z), findItem(pattern), selectItem(pattern), inspectAll() (see the system prompt). print(...) and report(text) write to the drone's activity log, which the player sees live; report often so they can follow. Return a value to report a result. Movements are tracked, so the drone still knows its way home. One task at a time; stop it with drone_command stop. Returns once the task has started; use drone_status to follow it.",
+      description = "Start a task on one of your drones: Lua code that runs ON THE TURTLE by itself, so the drone works on its own while you and the player watch. The code has the normal turtle API (turtle.forward(), turtle.dig(), turtle.inspect(), turtle.getItemDetail(), ...), sleep, os, peripheral, and helpers: whereAmI(), face(dir), moveTo(x, y, z), moveRel(x, y, z), pathTo(x, y, z), findItem(pattern), selectItem(pattern), inspectAll(), goHome(), unload(), refuelTo(n) (see the system prompt). Only for work drone_goto and drone_job can't do. print(...) and report(text) write to the drone's activity log, which the player sees live; report often so they can follow. Return a value to report a result. Movements are tracked, so the drone still knows its way home. One task at a time; stop it with drone_command stop. Returns once the task has started; use drone_status to follow it.",
       input_schema = obj({ id = INT("drone ID; optional if you have exactly one drone"),
                            name = { type = "string", description = "short task name, shown to the player" },
                            code = { type = "string", description = "Lua 5.2 code run on the turtle" } }, { "name", "code" }) },
@@ -154,6 +154,26 @@ local function toolList(withMap, withTemplates)
     { name = "drone_scan",
       description = "Have one of your drones look around (6 sides; it only turns in place) and add what it sees to the world map. The drone must be calibrated.",
       input_schema = obj({ id = INT("drone ID; optional if you have exactly one drone") }) },
+    { name = "drone_goto", risky = true,
+      description = "Drive a drone to a block (absolute x y z; rel = true: relative to home) or home (home = true) with its on-board 3D pathfinder: goes around buildings, protected areas and blocks it may not dig, digs only allowed natural blocks, waits for mobs and other turtles, replans when blocked, re-checks its position with GPS. Refuses at once if the fuel for the trip there and back home is missing (says how much coal to bring). Waits for the result: arrived, or failed with the reason and where the drone is now.",
+      input_schema = obj({ id = INT("drone ID; optional if you have exactly one drone"),
+                           x = INT(), y = INT(), z = INT(),
+                           home = { type = "boolean", description = "go home instead of x y z" },
+                           rel = { type = "boolean", description = "x y z relative to home" },
+                           face = INT("optional facing on arrival: 0 north, 1 east, 2 south, 3 west"),
+                           wait_seconds = INT("optional, 0-120, default 60: how long to wait for the result") }) },
+    { name = "drone_job", risky = true,
+      description = "Run a built-in job on a drone; safer than task code. tunnel: mine length blocks straight ahead from the cell in front (width to the right, height up, default 1 x 2; direction 0-3 optional), then come back. quarry: mine the box x1 y1 z1 x2 y2 z2 (absolute; at most 64 x 64 wide) top down, then come back. unload: go home and put everything except one stack of fuel into the chest at home. refuel: burn fuel items up to fuel_target. Mining never digs protected areas, containers or (safe dig) built blocks: it skips them and says how many; when the inventory is full it unloads at home and continues (drop_junk = true throws cobblestone, dirt, gravel... away first). Low fuel stops the job and brings the drone home. Waits for the result; long jobs keep running: follow them with drone_status.",
+      input_schema = obj({ id = INT("drone ID; optional if you have exactly one drone"),
+                           job = { type = "string", enum = json.array({ "tunnel", "quarry", "unload", "refuel" }) },
+                           length = INT("tunnel: 1-512"), width = INT("tunnel: 1-8, default 1"),
+                           height = INT("tunnel: 1-8, default 2"),
+                           direction = INT("tunnel: 0-3, default: the drone's facing"),
+                           x1 = INT("quarry box corner"), y1 = INT(), z1 = INT(), x2 = INT(), y2 = INT(), z2 = INT(),
+                           back = { type = "boolean", description = "tunnel/quarry: come back to the start (default true)" },
+                           drop_junk = { type = "boolean", description = "tunnel/quarry: throw junk away when full" },
+                           fuel_target = INT("refuel: fuel level to reach"),
+                           wait_seconds = INT("optional, 0-120, default 30") }, { "job" }) },
   }
   if withTemplates then
     local list1 = {
@@ -219,7 +239,10 @@ You act through tools. The player may be asked to approve risky actions first; i
 
 Drones are turtles.
 - You may control the drones the player gave you in the Drones app or, when the player chose "all my drones" in Claude's options, every drone this computer owns. drone_status lists yours. A drone only obeys the computer that owns it.
-- Prefer drone_task for real jobs: a small, careful program that reports progress and stops if something unexpected happens. Keep each task to one part of the job, follow it with drone_status, then start the next part. Every drone has a home; drone_command home brings it back.
+- Plan before acting: check drone_status first (fuel, calibrated, position, home, inventory, last task) and look at the map where the drone will go.
+- Use the built-in tools first: drone_goto to travel or go home, drone_job for tunnels, quarries, unloading and refuelling. They plan safe paths, obey the dig rules, check fuel and report success or the exact reason they failed. Use drone_task only for what they can't do (building, farming...): a small, careful program for one part of the job.
+- Work in small steps and verify each one (the result, drone_status) before the next.
+- When something fails, read the reason and solve it yourself: another route or target, refuel, unload, calibrate, drone_scan the area. Ask the player only for what only they can do (bring items, F3 coordinates, a decision) and say exactly what and why.
 ]]
 local TEMPLATE_RULES = [[
 Templates: save programs worth reusing with template_save, with their parameters as clearly named locals at the top so the player can tweak them; the player can rerun them with one tap in the Drones app, you with template_run.
@@ -229,8 +252,8 @@ Moving in 3D:
 - Coordinates are absolute Minecraft block coordinates as on the player's F3 screen: x grows to the east, y up, z to the south. Facing: 0 north (-z), 1 east (+x), 2 south (+z), 3 west (-x).
 - turtle.forward() and back() move one block along the facing direction, turnLeft() and turnRight() turn 90 degrees in place, up() and down() move one block vertically. A turtle cannot move into a solid block and never falls: it hovers wherever it stops.
 - A drone knows absolute coordinates only when calibrated (drone_status shows it). If it is not, ask the player for the drone's exact block position and facing from F3 and send drone_command calibrate with arg {x=, y=, z=, facing=}, or calibrate without arg if there is GPS.
-- Never steer a drone across distances with single move commands. Travel with drone_command goto, or moveTo in task code: both find a path around buildings and protected areas.
-- Task code has the turtle API plus: whereAmI() -> {x, y, z, f, rel = {x, y, z, f}, calibrated} (absolute when calibrated, rel = relative to home); face(dir) with dir 0-3 or "north"/"east"/"south"/"west"; moveTo(x, y, z) to an absolute position (pathfinding; digs only where allowed; errors if there is no way); moveRel(x, y, z) relative to home; pathTo(x, y, z) -> steps or nil, reason (only plans); findItem(pattern) -> slot or nil; selectItem(pattern) -> true/false; inspectAll() -> {front, up, down}; print(...) and report(...) write the activity log the player sees.
+- Never steer a drone across distances with single move commands. Travel with drone_goto, or moveTo in task code: both find a path around buildings and protected areas.
+- Task code has the turtle API plus: whereAmI() -> {x, y, z, f, rel = {x, y, z, f}, calibrated} (absolute when calibrated, rel = relative to home); face(dir) with dir 0-3 or "north"/"east"/"south"/"west"; moveTo(x, y, z) to an absolute position (pathfinding; digs only where allowed; errors with the reason if there is no way); moveRel(x, y, z) relative to home; pathTo(x, y, z) -> steps or nil, reason (only plans); findItem(pattern) -> slot or nil; selectItem(pattern) -> true/false; inspectAll() -> {front, up, down}; goHome(); unload() (into the chest at home); refuelTo(n) -> fuel; print(...) and report(...) write the activity log the player sees. Check what turtle functions return (ok, reason) and stop with error(reason) instead of carrying on blindly.
 Building:
 - Find the terrain height first (map_view, heights = true). Build layer by layer from the bottom up. Place with turtle.placeDown() while the turtle flies one block above the block it places, and keep the drone's own path out of where blocks go.
 - For big shapes, compute the list of block coordinates first in the task code (loops over x, y, z), then visit them in a sensible order (row by row, back and forth) and report progress every row or layer.
@@ -243,9 +266,9 @@ local NO_MAP_RULES = [[
 Drones refuse to dig inside the player's protected areas and, with safe dig on (the default), break only natural blocks (stone, dirt, sand, gravel, ores, leaves...). Never dig through the player's buildings.
 ]]
 local WORK_RULES = [[
-Fuel: moving one block costs 1 fuel. Check fuel and fuel items (coal) before long jobs. Drones refuel from coal in their inventory by themselves when low, and stop the task and drive home when fuel gets too low to return. If a job needs more fuel, ask the player for coal.
+Fuel: moving one block costs 1 fuel. Drones burn coal from their inventory by themselves; drone_goto and drone_job refuse trips they can't finish and get back from, and a task that runs low on fuel stops and drives home. If a job needs more fuel, tell the player how much coal to bring (the refusal says).
 Materials: blocks to place must be in the drone's inventory. Tell the player exactly what to bring (which block, how many).
-Several drones: for big projects (for example "build a big cross on a hill") use all your drones. Plan first and tell the player the plan briefly, give each drone its own area or layer so their paths never cross, start one small drone_task per drone and follow them with drone_status.
+Several drones: for big projects (for example "build a big cross on a hill") use all your drones. Plan first and tell the player the plan briefly, give each drone its own area or layer so their paths never cross, start one job or small task per drone and follow them with drone_status.
 ]]
 local TAIL = {
   desktop = "\nYour replies appear in a small in-game window about 40 characters wide that shows plain text only: answer briefly, no markdown tables, headings or bold.",
@@ -582,6 +605,10 @@ function K.new(opts)
   local function actionText(cmd, arg)
     if cmd == "run" and type(arg) == "table" then return "task " .. tostring(arg.name or "?") end
     if cmd == "goto" and type(arg) == "table" then return "goto " .. (xyz(arg) or "?") .. (arg.rel and " (rel)" or "") end
+    if cmd == "tunnel" and type(arg) == "table" then return "tunnel " .. tostring(arg.length or "?") end
+    if cmd == "quarry" and type(arg) == "table" then
+      return ("quarry %s to %s"):format(xyz({ arg.x1, arg.y1, arg.z1 }) or "?", xyz({ arg.x2, arg.y2, arg.z2 }) or "?")
+    end
     if type(arg) == "string" or type(arg) == "number" or type(arg) == "boolean" then return cmd .. " " .. tostring(arg) end
     return cmd
   end
@@ -625,7 +652,7 @@ function K.new(opts)
       if e == "rednet_message" and c == PROTO and type(b) == "table" then
         if a == id and b.t == "ack" and b.seq == mine and b.cmd == cmd then   -- the Drones app numbers from 1 too
           answered(b.ok)
-          return (b.ok and "ok" or "failed") .. (b.info and (": " .. tostring(b.info)) or ""), not b.ok
+          return (b.ok and "ok" or "failed") .. (b.info and (": " .. tostring(b.info)) or ""), not b.ok, b
         elseif onOther then
           onOther(a, b)
         end
@@ -652,7 +679,7 @@ function K.new(opts)
 
   function kit.precheck(name, input)
     if name == "drone_command" or name == "drone_task" or name == "drone_scan" or name == "template_run"
-       or name == "drone_send_map" then
+       or name == "drone_send_map" or name == "drone_goto" or name == "drone_job" then
       if name == "drone_command" and tostring(input.command) == "protect" then
         return "Protected areas are sent to the drones by this computer. Use protect_area to add one."
       end
@@ -775,6 +802,107 @@ function K.new(opts)
   end
 
   ------------------------------------------------ drone tools
+  -- the computer's map of the box from the drone to x y z (and to x2 y2 z2) -> the drone; returns a note
+  local function sendRoute(id, tx, ty, tz, x2, y2, z2)
+    tx, ty, tz = math.floor(tx), math.floor(ty), math.floor(tz)
+    x2, y2, z2 = math.floor(x2 or tx), math.floor(y2 or ty), math.floor(z2 or tz)
+    local d = statuses()[id]
+    local a = d and d.calibrated and type(d.abs) == "table" and tonumber(d.abs.x) and d.abs
+    local fx, fy, fz = a and math.floor(a.x) or tx, a and math.floor(a.y) or ty, a and math.floor(a.z) or tz
+    local n, err = sendMap(id, math.min(fx, tx, x2) - 8, math.min(fy, ty, y2) - 8, math.min(fz, tz, z2) - 8,
+                           math.max(fx, tx, x2) + 8, math.max(fy, ty, y2) + 8, math.max(fz, tz, z2) + 8)
+    return err and ("\n(map not sent: " .. err .. ")") or (n > 0 and ("\n(sent %d known blocks of the route first)"):format(n) or "")
+  end
+
+  -- wait up to `wait` seconds until drone id has finished its task number n -> lastTask, latest status | nil, status
+  local function waitJob(id, n, wait)
+    local deadline = os.clock() + wait
+    local latest
+    rednet.send(id, { t = "ping" }, PROTO)
+    local tick = os.startTimer(2)
+    while true do
+      local e, a, b, c = os.pullEvent()
+      if e == "rednet_message" and a == id and c == PROTO and type(b) == "table" and b.t == "status" then
+        latest, heard[id] = b, b
+        if b.jobId ~= n and type(b.lastTask) == "table" and b.lastTask.n == n then return b.lastTask, b end
+      elseif e == "timer" and a == tick then
+        if os.clock() >= deadline then return nil, latest end
+        rednet.send(id, { t = "ping" }, PROTO)
+        tick = os.startTimer(2)
+      end
+    end
+  end
+
+  -- answer of a command that may start a task: wait for the task's result (wait seconds) and describe it
+  local function taskResult(id, res, bad, ack, wait, note)
+    note = note or ""
+    if bad then return res .. note, true end
+    local n = type(ack) == "table" and tonumber(ack.job)
+    if not n then return res .. note end                 -- no task (refuel) or an old drone agent
+    if wait <= 0 then return ("started (task %d); follow it with drone_status%s"):format(n, note) end
+    local lt, d = waitJob(id, n, wait)
+    local now = d and (" now at %s, fuel %s"):format(absText(d), tostring(d.fuel)) or ""
+    if lt then
+      return ("%s: %s\n%s%s"):format(lt.ok and "done" or "FAILED", tostring(lt.info), now, note), not lt.ok
+    end
+    local p = d and progressText(d) or ""
+    return ("still running after %ds%s; follow it with drone_status wait_seconds\n%s%s"):format(wait,
+      p ~= "" and (" (" .. p .. ")") or "", now, note)
+  end
+
+  local function waitArg(input, def)
+    local w = opt(input.wait_seconds)
+    return math.max(0, math.min(120, math.floor(w or def)))
+  end
+
+  function RUN.drone_goto(input)
+    local id, err = pickDrone(input)
+    if not id then return err, true end
+    local wait = waitArg(input, 60)
+    if input.home == true then
+      local res, bad, ack = droneCall(id, "home")
+      return taskResult(id, res, bad, ack, wait)
+    end
+    local x, y, z = int(input.x), int(input.y), int(input.z)
+    if not (x and y and z) then return "Give x, y and z (or home = true).", true end
+    local arg = { x = x, y = y, z = z }
+    if input.rel == true then arg.rel = true end
+    local f = int(input.face)
+    if f then arg.face = f % 4 end
+    local note = arg.rel and "" or sendRoute(id, x, y, z)
+    local res, bad, ack = droneCall(id, "goto", arg)
+    return taskResult(id, res, bad, ack, wait, note)
+  end
+
+  function RUN.drone_job(input)
+    local id, err = pickDrone(input)
+    if not id then return err, true end
+    local kind = tostring(input.job ~= json.null and input.job or "")
+    local wait = waitArg(input, 30)
+    local function flag(v) if v == true or v == false then return v end end
+    if kind == "refuel" then
+      return droneCall(id, "refuel", int(input.fuel_target))
+    elseif kind == "unload" then
+      local res, bad, ack = droneCall(id, "unload", {})
+      return taskResult(id, res, bad, ack, wait)
+    elseif kind == "tunnel" then
+      local len = int(input.length)
+      if not len then return "tunnel needs length (1-512).", true end
+      local res, bad, ack = droneCall(id, "tunnel", { length = len, width = int(input.width), height = int(input.height),
+        dir = int(input.direction), back = flag(input.back), drop_junk = flag(input.drop_junk) })
+      return taskResult(id, res, bad, ack, wait)
+    elseif kind == "quarry" then
+      local b = { x1 = int(input.x1), y1 = int(input.y1), z1 = int(input.z1), x2 = int(input.x2), y2 = int(input.y2),
+                  z2 = int(input.z2) }
+      if not (b.x1 and b.y1 and b.z1 and b.x2 and b.y2 and b.z2) then return "quarry needs x1 y1 z1 x2 y2 z2.", true end
+      local note = sendRoute(id, b.x1, b.y1, b.z1, b.x2, b.y2, b.z2)
+      b.back, b.drop_junk = flag(input.back), flag(input.drop_junk)
+      local res, bad, ack = droneCall(id, "quarry", b)
+      return taskResult(id, res, bad, ack, wait, note)
+    end
+    return "job must be tunnel, quarry, unload or refuel.", true
+  end
+
   function RUN.drone_command(input)
     local id, err = pickDrone(input)
     if not id then return err, true end
@@ -785,13 +913,7 @@ function K.new(opts)
     if type(arg) == "table" then arg = plain(arg) end
     local note = ""
     if cmd == "goto" and type(arg) == "table" and not arg.rel and tonumber(arg.x) and tonumber(arg.y) and tonumber(arg.z) then
-      local tx, ty, tz = math.floor(arg.x), math.floor(arg.y), math.floor(arg.z)
-      local d = statuses()[id]
-      local a = d and d.calibrated and type(d.abs) == "table" and tonumber(d.abs.x) and d.abs
-      local fx, fy, fz = a and math.floor(a.x) or tx, a and math.floor(a.y) or ty, a and math.floor(a.z) or tz
-      local n, err = sendMap(id, math.min(fx, tx) - 8, math.min(fy, ty) - 8, math.min(fz, tz) - 8,
-                             math.max(fx, tx) + 8, math.max(fy, ty) + 8, math.max(fz, tz) + 8)
-      note = err and ("\n(map not sent: " .. err .. ")") or (n > 0 and ("\n(sent %d known blocks of the route first)"):format(n) or "")
+      note = sendRoute(id, arg.x, arg.y, arg.z)
     end
     local res, bad = droneCall(id, cmd, arg)
     return res .. note, bad
@@ -1135,6 +1257,18 @@ function K.new(opts)
                                         tostring(input.command),
                                         input.arg ~= nil and input.arg ~= json.null
                                           and (type(input.arg) == "table" and json.encode(input.arg) or tostring(input.arg)) or "")
+    end
+    if name == "drone_goto" or name == "drone_job" then
+      local who = input.id ~= nil and input.id ~= json.null and ("#" .. tostring(input.id)) or ""
+      if name == "drone_goto" then
+        return ("drone %s: go %s"):format(who, input.home == true and "home"
+          or ((xyz(input) or "?") .. (input.rel == true and " (from home)" or "")))
+      end
+      local t = {}
+      for _, k in ipairs { "length", "width", "height", "direction", "x1", "y1", "z1", "x2", "y2", "z2", "fuel_target" } do
+        if input[k] ~= nil and input[k] ~= json.null then t[#t + 1] = k .. "=" .. tostring(input[k]) end
+      end
+      return ("drone %s: %s %s"):format(who, tostring(input.job), table.concat(t, " "))
     end
     if name == "template_run" then
       local t = getTemplates()

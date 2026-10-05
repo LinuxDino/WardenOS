@@ -328,6 +328,33 @@ local function isNatural(d)
   return false
 end
 
+-- Never dug, not even with safe dig off: storage, machines, computers, spawners, beds, valuable blocks.
+-- An entry starting with "^" matches the start of the block name, any other one anywhere in it (plain text).
+-- Ores ("..._ore") are always allowed (mods put ores in their own namespace).
+local NEVER_DIG = { "chest", "barrel", "shulker_box", "hopper", "dispenser", "dropper", "furnace", "smoker",
+  "spawner", "beacon", "_bed", "brewing_stand", "enchanting_table", "anvil", "lectern", "jukebox", "respawn_anchor",
+  "lodestone", "conduit", "drawer", "crate", "^computercraft:", "^ae2:", "^appliedenergistics2:", "^refinedstorage:",
+  "minecraft:diamond_block", "minecraft:emerald_block", "minecraft:gold_block", "minecraft:iron_block",
+  "minecraft:netherite_block", "minecraft:lapis_block" }
+local neverCache = {}
+local function neverDig(name)
+  name = tostring(name)
+  local v = neverCache[name]
+  if v == nil then
+    v = false
+    if name:sub(-4) ~= "_ore" then
+      for _, p in ipairs(NEVER_DIG) do
+        if p:sub(1, 1) == "^" and name:sub(1, #p - 1) == p:sub(2) or p:sub(1, 1) ~= "^" and name:find(p, 1, true) then
+          v = true
+          break
+        end
+      end
+    end
+    neverCache[name] = v
+  end
+  return v
+end
+
 local function protectBoxes() return type(cfg.protect) == "table" and type(cfg.protect.boxes) == "table" and cfg.protect.boxes or {} end
 local function safeDig() return cfg.safeDig ~= false end
 
@@ -335,6 +362,7 @@ local function safeDig() return cfg.safeDig ~= false end
 -- dug, else the reason "protected: ...". inBox = name of the protected area the cell is in (or nil).
 local function refusal(d, inBox)
   if inBox then return "protected: " .. tostring(inBox) end
+  if neverDig(d.name) then return "protected: " .. tostring(d.name) .. " (never dug)" end
   if safeDig() and not isNatural(d) then return "protected: " .. tostring(d.name) .. " (safe dig)" end
 end
 
@@ -372,7 +400,7 @@ local H_WEIGHT = 2
 local UNBREAKABLE = { ["minecraft:bedrock"] = true, ["minecraft:barrier"] = true, ["minecraft:end_portal_frame"] = true,
   ["minecraft:end_portal"] = true, ["minecraft:nether_portal"] = true, ["minecraft:reinforced_deepslate"] = true,
   ["minecraft:command_block"] = true, ["minecraft:structure_block"] = true, ["minecraft:light"] = true,
-  ["minecraft:lava"] = true }
+  ["minecraft:lava"] = true, ["minecraft:flowing_lava"] = true }
 -- enterable without digging (air and vanilla "replaceable" blocks, for when only the name is known)
 local PASSABLE = {}
 for _, n in ipairs { "air", "minecraft:air", "minecraft:cave_air", "minecraft:void_air", "minecraft:water",
@@ -448,7 +476,7 @@ local function breathe()
   os.pullEvent("wardenos_yield")
 end
 
-local function searchOnce(s, t, margin, maxExp, ctx)
+local function searchOnce(s, t, margin, maxExp, ctx, partial)
   local x0, x1 = math.min(s.x, t.x) - margin, math.max(s.x, t.x) + margin
   local y0, y1 = math.min(s.y, t.y) - margin, math.max(s.y, t.y) + margin
   local z0, z1 = math.min(s.z, t.z) - margin, math.max(s.z, t.z) + margin
@@ -512,6 +540,29 @@ local function searchOnce(s, t, margin, maxExp, ctx)
     end
   end
   local start = (((s.x - x0) * SY + (s.y - y0)) * SZ + (s.z - z0)) * 4 + s.f
+  -- state -> list of steps from the start
+  local function steps(st)
+    local out, cur = {}, st
+    while cur ~= start do
+      local pf = cur % 4
+      local pci = (cur - pf) / 4
+      local pz = pci % SZ
+      local pr = (pci - pz) / SZ
+      local py = pr % SY
+      local px = (pr - py) / SY
+      local step = { x = px + x0, y = py + y0, z = pz + z0 }
+      local prev = from[cur]
+      local qci = (prev - prev % 4) / 4
+      if qci == pci - SZ then step.up = true          -- y + 1
+      elseif qci == pci + SZ then step.down = true
+      else step.dir = pf end
+      table.insert(out, 1, step)
+      cur = prev
+    end
+    return out
+  end
+  -- closest state to the target seen so far (partial path when the search runs out of budget)
+  local bestD, bestSt = math.abs(tx - s.x) + math.abs(ty - s.y) + math.abs(tz - s.z), nil
   g[start] = 0
   push(start, h(s.x, s.y, s.z, s.f))
   local exp = 0
@@ -521,7 +572,10 @@ local function searchOnce(s, t, margin, maxExp, ctx)
       closed[st] = true
       exp = exp + 1
       if exp % 200 == 0 then breathe() end
-      if exp > maxExp then return nil, "search limit", exp end
+      if exp > maxExp then
+        if partial and bestSt then return steps(bestSt), "partial", exp end
+        return nil, "search limit", exp
+      end
       local f = st % 4
       local ci = (st - f) / 4
       local zz = ci % SZ
@@ -530,25 +584,10 @@ local function searchOnce(s, t, margin, maxExp, ctx)
       local xx = (r - yy) / SY
       local x, y, z = xx + x0, yy + y0, zz + z0
       if x == tx and y == ty and z == tz then
-        local steps, cur = {}, st
-        while cur ~= start do
-          local pf = cur % 4
-          local pci = (cur - pf) / 4
-          local pz = pci % SZ
-          local pr = (pci - pz) / SZ
-          local py = pr % SY
-          local px = (pr - py) / SY
-          local step = { x = px + x0, y = py + y0, z = pz + z0 }
-          local prev = from[cur]
-          local qci = (prev - prev % 4) / 4
-          if qci == pci - SZ then step.up = true          -- y + 1
-          elseif qci == pci + SZ then step.down = true
-          else step.dir = pf end
-          table.insert(steps, 1, step)
-          cur = prev
-        end
-        return steps, nil, exp
+        return steps(st), nil, exp
       end
+      local d = math.abs(tx - x) + math.abs(ty - y) + math.abs(tz - z)
+      if d < bestD then bestD, bestSt = d, st end
       local gs = g[st]
       for d = 0, 3 do
         local nx, nz = x + DX[d], z + DZ[d]
@@ -578,9 +617,10 @@ local function searchOnce(s, t, margin, maxExp, ctx)
 end
 
 -- A* from relative position from (x, y, z, f) to relative cell to (x, y, z).
--- opts: margin (default 8, grown to 24 when nothing is found), maxExpand (default 20000), ctx.
+-- opts: margin (default 8, grown to 24 when nothing is found), maxExpand (default 20000), ctx, partial (true: when
+-- the search budget runs out, return the path to the closest cell reached, plus "partial").
 -- Returns a list of steps { x, y, z, dir = 0-3 (relative facing for a forward move) | up = true | down = true }
--- (the cell entered by each move) or nil, reason ("target blocked", "no path", "search limit").
+-- (the cell entered by each move) [, "partial"] or nil, reason ("target blocked", "no path", "search limit").
 local function findPath(from, to, opts)
   opts = opts or {}
   local ctx = opts.ctx or planCtx()
@@ -595,34 +635,63 @@ local function findPath(from, to, opts)
   end
   if not open then return nil, "no path" end
   local margin, maxExp = opts.margin or 8, opts.maxExpand or 20000
-  local steps, why = searchOnce(s, t, margin, maxExp, ctx)
-  if not steps and why == "no path" and margin < 24 then steps, why = searchOnce(s, t, 24, maxExp, ctx) end
+  local steps, why = searchOnce(s, t, margin, maxExp, ctx, opts.partial)
+  if not steps and why == "no path" and margin < 24 then steps, why = searchOnce(s, t, 24, maxExp, ctx, opts.partial) end
   return steps, why
 end
 
 ---------------------------------------------------------------- fuel
 local FUEL_HINTS = { "coal", "charcoal", "lava_bucket", "blaze_rod", "log", "planks" }
+-- real fuel, burnt first; other burnable items (logs, planks, wool...) may be building material: only in need
+local REAL_FUEL = { "coal", "charcoal", "lava_bucket", "blaze_rod", "dried_kelp_block" }
 local fuelCache = {}                            -- item name -> refuel(0) said it burns
+local FUEL_SPARE, COAL = 20, 80                 -- fuel kept in reserve; fuel per coal
 
-local function autoRefuel()
-  local lvl = turtle.getFuelLevel()
-  if type(lvl) ~= "number" or lvl >= 200 then return end
+local function realFuel(name)
+  for _, h in ipairs(REAL_FUEL) do
+    if name:find(h, 1, true) then return true end
+  end
+  return false
+end
+
+-- fuel level as a number (math.huge when fuel is off in the server config)
+local function fuelLevel()
+  local l = turtle.getFuelLevel()
+  return type(l) == "number" and l or math.huge
+end
+
+-- burn items from the inventory until the fuel level reaches want (real fuel first; other burnable items too
+-- when any = true). Returns the fuel level.
+local function burnTo(want, any)
+  local lvl = fuelLevel()
+  if lvl >= want then return lvl end
+  local limit = turtle.getFuelLimit and turtle.getFuelLimit()
+  if type(limit) == "number" and limit > 0 then want = math.min(want, limit) end
   local sel, changed = turtle.getSelectedSlot(), false
-  for i = 1, 16 do
-    if lvl >= 1000 then break end
-    local d = turtle.getItemDetail(i)
-    if d and fuelCache[d.name] ~= false then
-      if turtle.getSelectedSlot() ~= i then turtle.select(i) changed = true end
-      local burns = turtle.refuel(0) and true or false
-      fuelCache[d.name] = burns
-      while burns and lvl < 1000 and turtle.getItemCount(i) > 0 do
-        if not turtle.refuel(1) then break end
-        lvl = turtle.getFuelLevel()
-        if type(lvl) ~= "number" then break end
+  for pass = 1, any and 2 or 1 do
+    for i = 1, 16 do
+      if lvl >= want then break end
+      local d = turtle.getItemDetail(i)
+      if d and fuelCache[d.name] ~= false and (pass == 1) == realFuel(d.name) then
+        if turtle.getSelectedSlot() ~= i then turtle.select(i) changed = true end
+        local burns = turtle.refuel(0) and true or false
+        fuelCache[d.name] = burns
+        while burns and lvl < want and turtle.getItemCount(i) > 0 do
+          if not turtle.refuel(1) then break end
+          lvl = fuelLevel()
+        end
       end
     end
   end
   if changed then turtle.select(sel) end
+  return lvl
+end
+
+-- before every move: below 200 fuel, burn real fuel up to 1000 (anything burnable when nearly empty)
+local function autoRefuel()
+  local lvl = fuelLevel()
+  if lvl >= 200 then return end
+  burnTo(1000, lvl < 50)
 end
 
 local function fuelItems()
@@ -656,6 +725,8 @@ local DIGS = { dig = "front", digUp = "up", digDown = "down" }
 local MOVED = { forward = true, back = true, up = true, down = true }
 local killed = setmetatable({}, { __mode = "k" })   -- coroutines of tasks stopped by the fuel guard
 local fuelGuard                                      -- defined with the tasks
+local digCount = 0                                   -- blocks dug since the agent started (job statistics)
+local sinceFix = 0                                   -- moves since the last GPS check
 
 -- wrap the global turtle API so manual commands, tasks and the home navigator all update nav, map what they
 -- pass and never dig protected blocks. The originals are kept on the turtle table so restarting the agent
@@ -680,7 +751,10 @@ for n in pairs(TRACK) do
       TRACK[n]()
       dirty = true
       pcall(saveNav)
-      if MOVED[n] then memSet(nav.x, nav.y, nav.z, "air") end     -- where it stands now is passable
+      if MOVED[n] then
+        memSet(nav.x, nav.y, nav.z, "air")      -- where it stands now is passable
+        sinceFix = sinceFix + 1
+      end
       if (origin or (sensing and running)) and not quiet then
         observe("front")
         if MOVED[n] then observe("up") observe("down") end
@@ -697,6 +771,7 @@ for n, side in pairs(DIGS) do
     if why then return false, why end
     local r = table.pack(orig(...))
     if r[1] then
+      digCount = digCount + 1
       local rx, ry, rz = relNeighbour(side)
       memSet(rx, ry, rz, "air")
       if origin then
@@ -719,20 +794,34 @@ local function modems()
   return n
 end
 
-local function locate(timeout)
-  local x, y, z = gps.locate(timeout or 1)
-  if x then
-    pos, hasGps = { math.floor(x), math.floor(y), math.floor(z) }, true
-  else
-    pos, hasGps = nil, false
+-- GPS position (rounded: gps.locate can answer 63.9999 for 64) from 3 samples that must agree; nil if there
+-- is no GPS (hasGps = false) or the samples disagree (a GPS host moved or answers wrong)
+local function gpsFix(timeout)
+  local p
+  for i = 1, 3 do
+    local x, y, z = gps.locate(timeout or 1)
+    if not x then
+      if i == 1 then pos, hasGps, dirty = nil, false, true end
+      return nil
+    end
+    local q = { x = math.floor(x + 0.5), y = math.floor(y + 0.5), z = math.floor(z + 0.5) }
+    if p and (p.x ~= q.x or p.y ~= q.y or p.z ~= q.z) then return nil, "GPS answers disagree" end
+    p = q
   end
+  pos, hasGps, dirty = { p.x, p.y, p.z }, true, true
+  return p
+end
+
+local function locate(timeout)
+  gpsFix(timeout or 1)
   dirty = true
 end
 
 -- status broadcast. While a task runs it also has: by = { id = computer that started it, who = "claude" |
 -- "player" } (from the cmd message's optional by = "claude"), taskTime (whole seconds since it started) and
 -- progress = { phase = "planning" | "moving" | "digging" | "waiting" | "working", step, total, target, replans }
--- (step/total/target/replans only while the path follower moves). lastTask carries by too.
+-- (step/total/target/replans only while the path follower moves; mining jobs: phase "mining", step/total =
+-- cells). jobId = the running task's number; lastTask = { name, ok, info, by, n = its number }.
 local function status()
   local items, used = {}, 0
   for i = 1, 16 do
@@ -754,7 +843,7 @@ local function status()
     calibrated = origin ~= nil, abs = abs,
     origin = origin and { x = origin.x, y = origin.y, z = origin.z, f = origin.f } or nil,
     known = memN, safeDig = safeDig(), protectRev = type(cfg.protect) == "table" and tonumber(cfg.protect.rev) or 0,
-    by = job and job.by or nil,
+    by = job and job.by or nil, jobId = job and job.n or nil,
     taskTime = job and math.max(0, math.floor(os.clock() - job.started)) or nil,
     progress = job and job.progress or nil,
   }
@@ -794,14 +883,6 @@ local function calibrateAt(x, y, z, f)
   return true, ("calibrated %d %d %d %s"):format(x, y, z, FACE_NAMES[f])
 end
 
-local function gpsFix(timeout)
-  local x, y, z = gps.locate(timeout)
-  if not x then return nil end
-  local p = { x = math.floor(x + 0.5), y = math.floor(y + 0.5), z = math.floor(z + 0.5) }
-  pos, hasGps, dirty = { p.x, p.y, p.z }, true, true
-  return p
-end
-
 local function dirOf(dx, dz)
   if dx == 0 and dz == -1 then return 0 end
   if dx == 1 and dz == 0 then return 1 end
@@ -811,8 +892,8 @@ end
 
 -- GPS: locate, step forward (or back) to see which way it faces, step back again
 local function gpsCalibrate()
-  local p = gpsFix(2)
-  if not p then return false, "no GPS" end
+  local p, why = gpsFix(2)
+  if not p then return false, why or "no GPS" end
   quiet = true
   local ok, f, here, q = pcall(function()
     if turtle.forward() then
@@ -832,6 +913,43 @@ local function gpsCalibrate()
   if not q or not here then return false, "no GPS" end
   if not f then return false, "GPS gave no clear facing" end
   return calibrateAt(here.x, here.y, here.z, f)
+end
+
+-- GPS check while travelling (calibrated, GPS seen): is the drone where dead reckoning says? A mismatch (pushed
+-- by a piston, a wrong calibration, a lost move) corrects the position (home stays where it is), then one step
+-- forward and back (or back and forward) checks the facing. Returns nil (fine / no GPS) or a note for the log.
+local function gpsVerify()
+  if not origin or not hasGps then return nil end
+  local p = gpsFix(1)
+  if not p then return nil end
+  sinceFix = 0
+  local a = toAbs(nav)
+  if p.x == a.x and p.y == a.y and p.z == a.z then return nil end
+  local function put(q)
+    local r = toRel(q)
+    nav.x, nav.y, nav.z = r.x, r.y, r.z
+  end
+  put(p)
+  local f
+  quiet = true
+  pcall(function()
+    if rawMoves.forward() then
+      local q = gpsFix(1)
+      if q then f = dirOf(q.x - p.x, q.z - p.z) end
+      if not rawMoves.back() and q then put(q) end
+    elseif rawMoves.back() then
+      local q = gpsFix(1)
+      if q then f = dirOf(p.x - q.x, p.z - q.z) end
+      if not rawMoves.forward() and q then put(q) end
+    end
+  end)
+  quiet = false
+  if f then nav.f = (f - origin.f) % 4 end
+  memSet(nav.x, nav.y, nav.z, "air")
+  pcall(saveNav)
+  dirty = true
+  local now_ = toAbs(nav)
+  return ("GPS: position corrected to %d %d %d %s"):format(now_.x, now_.y, now_.z, FACE_NAMES[now_.f])
 end
 
 local function calibrate(arg)
@@ -890,7 +1008,8 @@ local function setProtect(arg)
 end
 
 ---------------------------------------------------------------- tasks
--- A task is Lua code sent by the owner ("run" command). It runs as a coroutine driven by worker().
+-- A task is Lua code sent by the owner ("run" command) or a built-in job. It runs as a coroutine driven by
+-- worker(). Every task gets a number (status.jobId while it runs, lastTask.n afterwards, ack.job when started).
 --
 -- Helpers in the task environment (besides the normal APIs; turtle.* is tracked, mapped and dig-protected):
 --   whereAmI()          -> { x, y, z, f, rel = { x, y, z, f }, calibrated = bool }; x/y/z/f are absolute when
@@ -900,24 +1019,34 @@ end
 --   moveTo(x, y, z)     absolute (error "not calibrated" if not). Path finds in 3D (A* over what the drone has
 --                          seen + the map the computer sent with "mapdata"): goes around buildings, protected
 --                          areas and blocks it may not dig, digs natural blocks when that is cheaper (dig = 4 moves).
---                          Replans when it finds something new in the way (max 40 times), waits for mobs.
---                          Returns true, or raises "no path to x y z" / "blocked at x y z" / "out of fuel".
+--                          Replans when it finds something new in the way, waits for mobs and other turtles,
+--                          follows partial paths when the target is too far for one search, checks GPS (when
+--                          there is GPS) every 32 moves and on arrival. Returns true, or raises "no path to x y z
+--                          [: why]" / "blocked at x y z: no progress ..." / "out of fuel ...".
 --   moveRel(x, y, z)    the same, relative to home (works uncalibrated; error "no home set" without home).
 --   pathTo(x, y, z)     absolute, plan only: -> number of moves (forward/up/down, turns not counted), or
 --                          nil, reason ("not calibrated", "no path", "target blocked", "search limit").
 --   findItem(pattern)   -> slot of the first item whose name contains pattern (plain text), or nil.
 --   selectItem(pattern) -> selects that slot, returns true/false.
 --   inspectAll()        -> { front = name|"air", up = ..., down = ... }, recorded for the map.
+--   goHome()            path home, face the home facing (raises "not enough fuel to get home ..." if short).
+--   unload([keepFuel])  go home and put everything (but one stack of fuel) into the chest at home.
+--   refuelTo(n)         burn fuel items until the fuel level is n -> fuel level.
 --   print(...), report(...) write to the drone's log (report also broadcasts the status).
--- Digging refuses protected areas and (with safe dig) blocks that are not natural: false, "protected: ...".
+-- Digging refuses protected areas, containers/machines/computers/valuable blocks (always) and (with safe dig)
+-- blocks that are not natural: false, "protected: ...".
 -- A task stops with "low fuel: returning home" when fuel runs short of the way home + 20 (it then goes home).
--- Commands "home" and "goto" ({ x, y, z [, rel = true] [, face = dir] }) run the same path follower as built-in
--- tasks ("home", "goto x y z"): busy rules, "stop" and lastTask apply.
+-- Commands "home", "goto" ({ x, y, z [, rel = true] [, face = dir] }), "tunnel", "quarry" and "unload" run as
+-- built-in tasks ("home", "goto x y z", "tunnel 20", "quarry 5x4x5", "unload"): busy rules, "stop" and lastTask
+-- apply. goto, tunnel and quarry refuse at once (ack ok = false, "not enough fuel: ...") when the fuel for the
+-- way there and back home is missing.
+local jobN = 0
+
 local function finish(j, ok, info, msg)
   if job ~= j then return end
   job = nil
   task, state = "manual", "ready"
-  lastTask = { name = j.name, ok = ok, info = cut(info or "", 200), by = j.by }
+  lastTask = { name = j.name, ok = ok, info = cut(info or "", 200), by = j.by, n = j.n }
   note(cut(msg, 60))
   pcall(saveMem)
   bcast()
@@ -932,8 +1061,9 @@ end
 -- by: who started it ({ id, who }); default: the sender of the command being run
 local function startJob(name, fn, builtin, by)
   sensing = false                               -- a stopped trip never got to switch it off
+  jobN = jobN + 1
   job = { name = name, co = coroutine.create(fn), builtin = builtin, by = by or cmdBy, started = os.clock(),
-          progress = { phase = "working" } }
+          progress = { phase = "working" }, n = jobN }
   task, state = name, "working"
   os.queueEvent("wardenos_task")
   return true, "started"
@@ -946,21 +1076,40 @@ local function turnTo(f)
   elseif d == 3 then turtle.turnLeft() end
 end
 
--- "x y z" of the current position: absolute when calibrated
-local function here()
-  local a = origin and toAbs(nav) or nav
+-- "x y z" of relative cell r (default: the current position): absolute when calibrated
+local function here(r)
+  r = r or nav
+  local a = origin and toAbs(r) or r
   return ("%d %d %d"):format(a.x, a.y, a.z)
 end
 
-local MAX_REPLANS, MOB_WAITS, MOB_BUDGET = 40, 5, 10
+local function manhattan(a, x, y, z) return math.abs(a.x - x) + math.abs(a.y - y) + math.abs(a.z - z) end
+local function homeDist(x, y, z) return math.abs(x) + math.abs(y) + math.abs(z) end
 
--- try to move into the next cell of a path; false if it can't (the reason is now in the memory)
+-- nil if the fuel (after burning real fuel from the inventory) lasts for `there` moves and then `back` moves
+-- home, plus a spare; else the reason
+local function fuelFor(there, back)
+  back = homeSet and back or 0
+  local spare = FUEL_SPARE + math.ceil((there + back) / 10)
+  local need = there + back + spare
+  local lvl = burnTo(need)
+  if lvl >= need then return nil end
+  return ("not enough fuel: needs about %d (%d there%s + %d spare), has %d; bring %d coal"):format(need, there,
+    back > 0 and (" + " .. back .. " back home") or "", spare, lvl, math.ceil((need - lvl) / COAL))
+end
+
+local MAX_REPLANS, MOB_WAITS, MOB_BUDGET = 40, 5, 10
+local GPS_EVERY, TEMP_WAITS = 32, 5
+
+-- try to move into the next cell of a path; false if it can't (the reason is now in the memory, and what was
+-- in the way in trip.obstacle)
 local function enter(step, trip)
   local move, dig, side = turtle.forward, turtle.dig, "front"
   if step.up then move, dig, side = turtle.up, turtle.digUp, "up"
   elseif step.down then move, dig, side = turtle.down, turtle.digDown, "down"
   else turnTo(step.dir) end
   local k = ckey(step.x, step.y, step.z)
+  local where = here(step)
   local waits = 0
   for _ = 1, 24 do                              -- falling gravel/sand: dig again
     local ok, err = move()
@@ -969,17 +1118,22 @@ local function enter(step, trip)
       return true
     end
     err = type(err) == "string" and err:lower() or ""
-    if err:find("fuel", 1, true) then error("out of fuel", 0) end
+    if err:find("fuel", 1, true) then error("out of fuel at " .. here(), 0) end
     if err:find("too high", 1, true) or err:find("too low", 1, true) or err:find("leave", 1, true)
        or err:find("border", 1, true) or err:find("protected area", 1, true) then
       hard[k] = true
+      trip.obstacle = "the world's limit at " .. where
       return false
     end
     local name = observe(side)
     local prog = trip.progress
     if name == nil then                         -- can't inspect: try to dig blind
       if prog then prog.phase = "digging" end
-      if not dig() then mem[k] = mem[k] or "solid?" hard[k] = true return false end
+      if not dig() then
+        mem[k] = mem[k] or "solid?" hard[k] = true
+        trip.obstacle = "a block it can't dig at " .. where
+        return false
+      end
     elseif name == "air" or enterable(name) then
       -- nothing (or only something replaceable) there but the move failed: a mob or player
       if waits < MOB_WAITS and trip.waits < MOB_BUDGET then
@@ -989,54 +1143,138 @@ local function enter(step, trip)
         sleep(0.5)
       else
         temp[k] = now() + 20
+        trip.obstacle = "a mob or player at " .. where
         return false
       end
     elseif temp[k] then                         -- another turtle (memSet blocked it for a while)
+      trip.obstacle = "another turtle at " .. where
       return false
     else
       if prog then prog.phase = "digging" end
-      if not dig() then                         -- the dig rule refused, or it can't be dug
-        if not refusal({ name = name, tags = tagCache[name] }) then hard[k] = true end
+      local dug, why = dig()
+      if not dug then                           -- the dig rule refused, or it can't be dug
+        if not (type(why) == "string" and why:find("^protected")) then hard[k] = true end
+        trip.obstacle = ("%s at %s (%s)"):format(name, where, tostring(why or "can't dig"))
         return false
       end
     end
   end
   hard[k] = true
+  trip.obstacle = "blocks that keep falling at " .. where
   return false
+end
+
+-- is any cell blocked for a while (other turtles, mobs)?
+local function anyTemp(ctx)
+  for _, t in pairs(temp) do
+    if t > ctx.t then return true end
+  end
+  return false
+end
+
+-- why travel can't reach relative cell t (findPath said why), for the error
+local function noPathText(why, tx, ty, tz, label, ctx, trip)
+  local s
+  if why == "target blocked" then
+    local k = ckey(tx, ty, tz)
+    local v = mem[k]
+    local what = "a cell it can't enter"
+    if ctx.ylo and (ty < ctx.ylo or ty > ctx.yhi) then what = "outside the world's height"
+    elseif temp[k] then what = "taken by another turtle or a mob"
+    elseif v == "solid?" or hard[k] then what = "a block it could not dig"
+    elseif v and UNBREAKABLE[v] then what = v .. " (never entered or dug)"
+    elseif v then
+      local inBox
+      for _, b in ipairs(ctx.boxes) do
+        if tx >= b.x1 and tx <= b.x2 and ty >= b.y1 and ty <= b.y2 and tz >= b.z1 and tz <= b.z2 then
+          inBox = b.name
+          break
+        end
+      end
+      what = v .. " (" .. tostring(refusal({ name = v, tags = tagCache[v] }, inBox) or "can't dig") .. ")"
+    end
+    s = ("no path to %s: the target is %s"):format(label, what)
+  elseif why == "search limit" then
+    s = ("no path to %s (search limit)"):format(label)
+  else
+    s = ("no path to %s: walled in by blocks it may not dig"):format(label)
+  end
+  if trip.obstacle then s = s .. "; last obstacle: " .. trip.obstacle end
+  return s
 end
 
 -- follow A* paths to relative cell (tx, ty, tz), replanning when something new is in the way
 -- progress (status.progress of the running job): { phase = "planning" | "moving" | "digging" | "waiting" |
 -- "working", step, total, target = { x, y, z } (absolute when calibrated, else relative), replans }
-local function travel(tx, ty, tz, label)
+-- opts.fuel = true: before the first move, check the fuel for the planned path and the way home.
+-- opts.quick = true: short hop (mining): GPS check on arrival only when one is due anyway.
+local function travel(tx, ty, tz, label, opts)
+  opts = opts or {}
   local j = running or job
   local tgt = origin and toAbs({ x = tx, y = ty, z = tz }) or { x = tx, y = ty, z = tz }
   local prog = { phase = "planning", step = 0, total = 0, target = { x = tgt.x, y = tgt.y, z = tgt.z }, replans = 0 }
   if j then j.progress = prog end
   local trip = { waits = 0, visits = {}, progress = prog }
-  local replans = 0
+  -- stale: replans since the drone last got closer than ever (a long trip may replan often while it gets on)
+  local replans, stale, best, tempWaits, fixes = 0, 0, math.huge, 0, 0
+  local fuelChecked = not opts.fuel
   local was = sensing
   sensing = true
   local ok, err = pcall(function()
-    while nav.x ~= tx or nav.y ~= ty or nav.z ~= tz do
-      prog.phase = "planning"
-      liveStatus()
-      local ctx = planCtx()
-      ctx.visits = trip.visits
-      local steps, why = findPath(nav, { x = tx, y = ty, z = tz }, { ctx = ctx })
-      if not steps then
-        error(why == "search limit" and ("no path to %s (search limit)"):format(label) or ("no path to " .. label), 0)
-      end
-      prog.total, prog.step = #steps, 0
-      for i, s in ipairs(steps) do
-        prog.phase, prog.step = "moving", i
+    while true do
+      if nav.x == tx and nav.y == ty and nav.z == tz then
+        -- arrived; GPS may say it is not really there
+        local fixed = fixes < 3 and sinceFix > 0 and (not opts.quick or sinceFix >= GPS_EVERY) and gpsVerify()
+        if not fixed then break end
+        fixes = fixes + 1
+        note(fixed)
+      else
+        prog.phase = "planning"
         liveStatus()
-        -- sense - replan: something seen on the way made the next cell impassable
-        if not cellCost(s.x, s.y, s.z, ctx) or not enter(s, trip) then
-          replans = replans + 1
-          prog.replans = replans
-          if replans > MAX_REPLANS then error("blocked at " .. here(), 0) end
-          break
+        local ctx = planCtx()
+        ctx.visits = trip.visits
+        local steps, why = findPath(nav, { x = tx, y = ty, z = tz }, { ctx = ctx, partial = true })
+        if not steps then
+          if why ~= "search limit" and tempWaits < TEMP_WAITS and anyTemp(ctx) then
+            tempWaits = tempWaits + 1             -- another turtle or a mob in the way: wait, then plan again
+            prog.phase = "waiting"
+            liveStatus()
+            sleep(2)
+            for k in pairs(temp) do temp[k] = nil end   -- they move: look again
+          else
+            error(noPathText(why, tx, ty, tz, label, ctx, trip), 0)
+          end
+        else
+          if not fuelChecked then
+            fuelChecked = true
+            local short = fuelFor(why == "partial" and manhattan(nav, tx, ty, tz) or #steps, homeDist(tx, ty, tz))
+            if short then error(short, 0) end
+          end
+          prog.total, prog.step = #steps, 0
+          for i, s in ipairs(steps) do
+            prog.phase, prog.step = "moving", i
+            liveStatus()
+            -- sense - replan: something seen on the way made the next cell impassable
+            if not cellCost(s.x, s.y, s.z, ctx) or not enter(s, trip) then
+              replans = replans + 1
+              prog.replans = replans
+              break
+            end
+            if sinceFix >= GPS_EVERY then
+              local fixed = gpsVerify()
+              if fixed then note(fixed) break end
+            end
+          end
+          local d = manhattan(nav, tx, ty, tz)
+          if d < best then
+            best, stale = d, 0
+          else
+            stale = stale + 1
+            if stale > MAX_REPLANS or replans > 10 * MAX_REPLANS then
+              error(("blocked at %s: no progress towards %s after %d replans%s"):format(here(), label, replans,
+                    trip.obstacle and ("; last obstacle: " .. trip.obstacle) or ""), 0)
+            end
+          end
         end
       end
     end
@@ -1049,10 +1287,11 @@ end
 
 -- built-in task "home": path to 0,0,0, then face f = 0
 local function goHome()
-  autoRefuel()
-  local fuel = turtle.getFuelLevel()
-  if type(fuel) == "number" and fuel < math.abs(nav.x) + math.abs(nav.y) + math.abs(nav.z) + 10 then
-    error("not enough fuel", 0)
+  local need = homeDist(nav.x, nav.y, nav.z) + 5
+  local lvl = burnTo(need, true)
+  if lvl < need then
+    error(("not enough fuel to get home: needs about %d, has %d; bring %d coal"):format(need, lvl,
+          math.ceil((need - lvl) / COAL)), 0)
   end
   travel(0, 0, 0, "home")
   turnTo(0)
@@ -1065,12 +1304,12 @@ fuelGuard = function()
   local j = running
   if not j or j.builtin or job ~= j then return end
   local fuel = turtle.getFuelLevel()
-  if type(fuel) ~= "number" or fuel >= math.abs(nav.x) + math.abs(nav.y) + math.abs(nav.z) + 20 then return end
+  if type(fuel) ~= "number" or fuel >= homeDist(nav.x, nav.y, nav.z) + FUEL_SPARE then return end
   local msg = "low fuel: returning home"
   killed[j.co] = true
   job = nil
   task, state = "manual", "ready"
-  lastTask = { name = j.name, ok = false, info = msg, by = j.by }
+  lastTask = { name = j.name, ok = false, info = msg, by = j.by, n = j.n }
   note(msg)
   if homeSet then startJob("home", goHome, true, j.by) end
   bcast()
@@ -1137,12 +1376,273 @@ local function startGoto(arg)
   if rel and not homeSet then return false, "no home set" end
   if not rel and not origin then return false, "not calibrated" end
   local label = ("%d %d %d"):format(x, y, z)
+  local r = rel and { x = x, y = y, z = z } or toRel({ x = x, y = y, z = z })
+  local short = fuelFor(manhattan(nav, r.x, r.y, r.z), homeDist(r.x, r.y, r.z))
+  if short then return false, short end
   return startJob("goto " .. label, function()
-    local r = rel and { x = x, y = y, z = z } or toRel({ x = x, y = y, z = z })
-    travel(r.x, r.y, r.z, label)
+    travel(r.x, r.y, r.z, label, { fuel = true })
     if f then turnTo(rel and f or (f - origin.f) % 4) end
     note("arrived " .. label)
     return "arrived " .. label
+  end, false)
+end
+
+---------------------------------------------------------------- built-in jobs: tunnel, quarry, unload
+-- Mining jobs walk every third layer and dig the layers above and below from there. They never dig what the
+-- dig rule refuses (they skip it and say so), go home to unload into the chest there when the inventory is
+-- full (or drop junk first with drop_junk), and come back to where they started.
+-- (one table: the agent's main chunk is near Lua's limit of 200 locals)
+local JOBS = { junk = {}, containers = { "chest", "barrel", "shulker_box", "hopper", "drawer", "crate" },
+               drop = { front = "drop", up = "dropUp", down = "dropDown" },
+               pside = { front = "front", up = "top", down = "bottom" } }
+for _, n in ipairs { "minecraft:cobblestone", "minecraft:cobbled_deepslate", "minecraft:dirt", "minecraft:gravel",
+                     "minecraft:netherrack", "minecraft:tuff", "minecraft:granite", "minecraft:diorite",
+                     "minecraft:andesite", "minecraft:calcite", "minecraft:sand", "minecraft:blackstone",
+                     "minecraft:basalt", "minecraft:stone", "minecraft:deepslate" } do
+  JOBS.junk[n] = true
+end
+
+local function freeSlots()
+  local n = 0
+  for i = 1, 16 do if turtle.getItemCount(i) == 0 then n = n + 1 end end
+  return n
+end
+
+-- the inventory block next to the drone: side, name (nil if none)
+local function findContainer()
+  for _, side in ipairs { "front", "down", "up" } do
+    local name = peek(side)
+    if name and name ~= "air" then
+      for _, c in ipairs(JOBS.containers) do
+        if name:find(c, 1, true) then return side, name end
+      end
+      local ok, inv = pcall(function()
+        return peripheral.hasType and peripheral.hasType(JOBS.pside[side], "inventory")
+      end)
+      if ok and inv then return side, name end
+    end
+  end
+end
+
+-- put everything into the container next to the drone, but keep one stack of real fuel (keepFuel)
+-- -> moved, left, side, name | nil, why
+local function unloadHere(keepFuel)
+  local side, name = findContainer()
+  if not side then return nil, "no chest at home: put a chest in front of, above or below the home spot" end
+  local drop = turtle[JOBS.drop[side]]
+  if not drop then return nil, "this turtle can't drop items " .. side end
+  local sel, moved, left, kept = turtle.getSelectedSlot(), 0, 0, false
+  for i = 1, 16 do
+    local d = turtle.getItemDetail(i)
+    if d then
+      if keepFuel and not kept and realFuel(d.name) then
+        kept = true
+      else
+        turtle.select(i)
+        drop()
+        local rest = turtle.getItemCount(i)
+        moved, left = moved + d.count - rest, left + rest
+      end
+    end
+  end
+  turtle.select(sel)
+  return moved, left, side, name
+end
+
+-- throw away cobblestone, dirt, gravel... -> stacks dropped
+local function dropJunk()
+  local sel, n = turtle.getSelectedSlot(), 0
+  for i = 1, 16 do
+    local d = turtle.getItemDetail(i)
+    if d and JOBS.junk[d.name] then
+      turtle.select(i)
+      if turtle.drop() then n = n + 1 end
+    end
+  end
+  turtle.select(sel)
+  return n
+end
+
+local function unloadJob(keepFuel)
+  if not homeSet then error("no home set", 0) end
+  goHome()
+  local moved, left, side, name = unloadHere(keepFuel ~= false)
+  if not moved then error(left, 0) end
+  if left > 0 then
+    error(("chest full: put %d items into %s, %d still in the drone"):format(moved, name, left), 0)
+  end
+  local msg = ("unloaded %d items into %s (%s)"):format(moved, name, side)
+  note(cut(msg, 60))
+  return msg
+end
+
+-- walking layers of a box from y2 down to y1: each one also digs the layer above and below
+local function bandsOf(y1, y2)
+  local out, yw = {}, y2 - 1
+  while true do
+    if yw < y1 then yw = y1 end
+    out[#out + 1] = yw
+    if yw - 1 <= y1 then return out end
+    yw = yw - 3
+  end
+end
+
+-- a travel error that only means "this cell can't be reached" (the job skips it); others end the job
+local function skippable(e)
+  return type(e) == "string" and (e:find("^no path to") or e:find("^blocked at")) and true or false
+end
+
+-- mine every cell of box b (relative, inclusive) the dig rules allow. o: dropJunk, unload (false: never go
+-- home to unload). -> { dug, skipped, why (first reason something was skipped), trips }
+local function mineBox(b, o)
+  local st = { dug = 0, skipped = 0, trips = 0 }
+  local dug0 = digCount
+  local j = running or job
+  local function skip(why)
+    st.skipped = st.skipped + 1
+    st.why = st.why or tostring(why):gsub("; last obstacle: .*$", "")
+  end
+  local function digSide(side)
+    local dig = side == "up" and turtle.digUp or turtle.digDown
+    for _ = 1, 16 do                             -- gravel and sand keep falling in
+      local name = observe(side)
+      if name == nil or name == "air" or PASSABLE[name] then return end
+      if UNBREAKABLE[name] then return skip(name .. " can't be dug") end
+      local ok, why = dig()
+      if not ok then return skip(name .. ": " .. tostring(why or "can't dig")) end
+    end
+  end
+  local function roomCheck()
+    if freeSlots() > 0 then return end
+    if o.dropJunk and dropJunk() > 0 and freeSlots() > 0 then return end
+    if o.unload == false or not homeSet then error("inventory full at " .. here(), 0) end
+    local back = { x = nav.x, y = nav.y, z = nav.z }
+    goHome()
+    local moved, left = unloadHere(true)
+    if not moved then error("inventory full; " .. left, 0) end
+    if freeSlots() == 0 then error("inventory full and the chest at home is full", 0) end
+    st.trips = st.trips + 1
+    note("unloaded, back to work")
+    travel(back.x, back.y, back.z, here(back), { fuel = true })
+  end
+  local bands = bandsOf(b.y1, b.y2)
+  local nx, nz = b.x2 - b.x1 + 1, b.z2 - b.z1 + 1
+  local total, done, flip = #bands * nx * nz, 0, false
+  for bi, y in ipairs(bands) do
+    for xi = 0, nx - 1 do
+      local x = bi % 2 == 1 and b.x1 + xi or b.x2 - xi
+      for zi = 0, nz - 1 do
+        local z = flip and b.z2 - zi or b.z1 + zi
+        roomCheck()
+        local ok, e = pcall(travel, x, y, z, here({ x = x, y = y, z = z }), { quick = true })
+        if ok then
+          if y + 1 <= b.y2 then digSide("up") end
+          if y - 1 >= b.y1 then digSide("down") end
+        elseif skippable(e) then
+          skip(e)
+        else
+          error(e, 0)
+        end
+        done = done + 1
+        if j then j.progress = { phase = "mining", step = done, total = total } end
+        liveStatus()
+      end
+      flip = not flip
+    end
+  end
+  st.dug = digCount - dug0
+  return st
+end
+
+local function jobSummary(what, st)
+  if st.dug == 0 and st.skipped > 0 then error(what .. ": mined nothing; " .. tostring(st.why), 0) end
+  local s = ("%s done: dug %d blocks"):format(what, st.dug)
+  if st.trips > 0 then s = s .. (", %d unload trips"):format(st.trips) end
+  if st.skipped > 0 then s = s .. (", skipped %d (first: %s)"):format(st.skipped, tostring(st.why)) end
+  return s
+end
+
+-- integer argument in lo..hi (default def when missing) -> n | nil
+local function intArg(v, lo, hi, def)
+  if v == nil then return def end
+  v = tonumber(v)
+  if not isNum(v) then return nil end
+  v = math.floor(v)
+  if v < lo or v > hi then return nil end
+  return v
+end
+
+-- command "tunnel": { length, width = 1, height = 2, dir (facing; default: the current one), back = true,
+-- drop_junk } -> task "tunnel N": mines from the cell in front of the drone, width to its right, height up
+local function startTunnel(arg)
+  if type(arg) ~= "table" then arg = { length = arg } end
+  local len, w, h = intArg(arg.length, 1, 512), intArg(arg.width, 1, 8, 1), intArg(arg.height, 1, 8, 2)
+  if not len then return false, "bad length (1-512)" end
+  if not w then return false, "bad width (1-8)" end
+  if not h then return false, "bad height (1-8)" end
+  local f = nav.f
+  if arg.dir ~= nil then
+    f = parseFacing(arg.dir)
+    if not f then return false, "bad direction" end
+    if origin then f = (f - origin.f) % 4 end
+  end
+  local r = (f + 1) % 4
+  local ax, az = nav.x + DX[f], nav.z + DZ[f]
+  local bx, bz = nav.x + DX[f] * len + DX[r] * (w - 1), nav.z + DZ[f] * len + DZ[r] * (w - 1)
+  local box = { x1 = math.min(ax, bx), x2 = math.max(ax, bx), y1 = nav.y, y2 = nav.y + h - 1,
+                z1 = math.min(az, bz), z2 = math.max(az, bz) }
+  local back = arg.back ~= false
+  local walk = len * w * #bandsOf(box.y1, box.y2)
+  local short = fuelFor(walk + (back and len + w or 0),
+                        back and homeDist(nav.x, nav.y, nav.z) or homeDist(bx, nav.y, bz))
+  if short then return false, short end
+  local start = { x = nav.x, y = nav.y, z = nav.z, f = f }
+  return startJob(("tunnel %d"):format(len), function()
+    local st = mineBox(box, { dropJunk = arg.drop_junk == true, unload = arg.unload })
+    if back then
+      travel(start.x, start.y, start.z, "the tunnel start")
+      turnTo(start.f)
+    end
+    local msg = jobSummary(("tunnel %d x %d x %d"):format(len, w, h), st)
+    note(cut(msg, 60))
+    return msg
+  end, false)
+end
+
+-- command "quarry": { x1, y1, z1, x2, y2, z2 [, rel = true] [, back = true] [, drop_junk] } -> task "quarry WxHxD"
+-- mines the box from the top down, then returns to where it started
+local function startQuarry(arg)
+  if type(arg) ~= "table" then return false, "bad box" end
+  local a = { cell3(arg.x1, arg.y1, arg.z1) }
+  local c = { cell3(arg.x2, arg.y2, arg.z2) }
+  if not a[1] or not c[1] then return false, "bad box" end
+  local rel = arg.rel == true
+  if rel and not homeSet then return false, "no home set" end
+  if not rel and not origin then return false, "not calibrated" end
+  local p = rel and { x = a[1], y = a[2], z = a[3] } or toRel({ x = a[1], y = a[2], z = a[3] })
+  local q = rel and { x = c[1], y = c[2], z = c[3] } or toRel({ x = c[1], y = c[2], z = c[3] })
+  local box = { x1 = math.min(p.x, q.x), x2 = math.max(p.x, q.x), y1 = math.min(p.y, q.y), y2 = math.max(p.y, q.y),
+                z1 = math.min(p.z, q.z), z2 = math.max(p.z, q.z) }
+  local sx, sy, sz = box.x2 - box.x1 + 1, box.y2 - box.y1 + 1, box.z2 - box.z1 + 1
+  if sx > 64 or sz > 64 or sx * sy * sz > 65536 then
+    return false, "box too big (max 64 x 64 wide, 65536 blocks)"
+  end
+  local back = arg.back ~= false
+  -- fuel to get there, mine the first walking layer (more as coal turns up) and get home
+  local there = manhattan(nav, box.x1, box.y2, box.z1) + math.min(sx * sz * #bandsOf(box.y1, box.y2), 400)
+  local short = fuelFor(there, homeDist(box.x1, box.y2, box.z1))
+  if short then return false, short end
+  local start = { x = nav.x, y = nav.y, z = nav.z, f = nav.f }
+  local dims = ("%dx%dx%d"):format(sx, sy, sz)
+  return startJob("quarry " .. dims, function()
+    local st = mineBox(box, { dropJunk = arg.drop_junk == true, unload = arg.unload })
+    if back then
+      travel(start.x, start.y, start.z, "the quarry start")
+      turnTo(start.f)
+    end
+    local msg = jobSummary("quarry " .. dims, st)
+    note(cut(msg, 60))
+    return msg
   end, false)
 end
 
@@ -1200,6 +1700,8 @@ local function startTask(arg)
   env.turtle = turtle
   env.whereAmI, env.face, env.moveTo, env.moveRel, env.pathTo = whereAmI, faceDir, moveTo, moveRel, pathTo
   env.findItem, env.selectItem, env.inspectAll = findItem, selectItem, inspectAll
+  env.goHome, env.unload = goHome, unloadJob
+  env.refuelTo = function(n) return burnTo(tonumber(n) or 0, true) end
   local fn, err = load(arg.code, "=" .. name, "t", env)
   if not fn then return false, "syntax error: " .. tostring(err) end
   return startJob(name, fn)
@@ -1245,10 +1747,20 @@ local MOVES = {
 }
 local WHILE_BUSY = { stop = true, claim = true, release = true, label = true, locate = true, mapdata = true }
 
-local function refuel()
+-- arg: nil = burn everything burnable; a number (or { to = n }) = burn fuel items until the fuel level is n
+local function refuel(arg)
   local sel, gained = turtle.getSelectedSlot(), 0
   local before = turtle.getFuelLevel()
   if before == "unlimited" then return true end
+  local target = tonumber(type(arg) == "table" and arg.to or arg)
+  if target then
+    local limit = turtle.getFuelLimit()
+    target = math.floor(math.min(target, type(limit) == "number" and limit > 0 and limit or target))
+    local lvl = burnTo(target, true)
+    if lvl >= target then return true, ("fuel %d (+%d)"):format(lvl, lvl - before) end
+    return false, ("fuel %d (+%d): out of fuel items before %d; bring %d coal"):format(lvl, lvl - before, target,
+                                                                                    math.ceil((target - lvl) / COAL))
+  end
   for i = 1, 16 do
     if turtle.getItemCount(i) > 0 then
       turtle.select(i)
@@ -1295,7 +1807,7 @@ local function run(from, cmd, arg)
     if ok and MOVED[cmd] and hasGps then locate(0.5) end
     return ok, err
   elseif cmd == "refuel" then
-    return refuel()
+    return refuel(arg)
   elseif cmd == "select" then
     local n = tonumber(arg)
     if not n or n < 1 or n > 16 then return false, "bad slot" end
@@ -1318,6 +1830,14 @@ local function run(from, cmd, arg)
     return startJob("home", goHome, true)
   elseif cmd == "goto" then
     return startGoto(arg)
+  elseif cmd == "tunnel" then
+    return startTunnel(arg)
+  elseif cmd == "quarry" then
+    return startQuarry(arg)
+  elseif cmd == "unload" then
+    if not homeSet then return false, "no home set" end
+    local keep = not (type(arg) == "table" and arg.keep_fuel == false)
+    return startJob("unload", function() return unloadJob(keep) end, false)
   elseif cmd == "mapdata" then
     return mapData(arg)
   elseif cmd == "calibrate" then
@@ -1356,13 +1876,15 @@ local function listen()
         if not job then state = "busy" end
         dirty = true
         cmdBy = { id = from, who = msg.by == "claude" and "claude" or "player" }   -- a task started now keeps it
+        local before = job
         local ok, res, info = pcall(run, from, msg.cmd, msg.arg)
         cmdBy = nil
         if not ok then info, res = res, false end  -- run() crashed: report the error
         state = job and "working" or "ready"
         note(cut(msg.cmd .. (res and " ok" or " failed") .. (info and (": " .. tostring(info)) or ""), 60))
         rednet.send(from, { t = "ack", seq = msg.seq, cmd = msg.cmd, ok = res and true or false,
-                            info = info and tostring(info) or nil }, PROTO)
+                            info = info and tostring(info) or nil,
+                            job = res and job and job ~= before and job.n or nil }, PROTO)   -- the task it started
         bcast()
         if res and msg.cmd == "update" then
           sleep(0.5)
