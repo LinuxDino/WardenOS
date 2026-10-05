@@ -1,0 +1,22 @@
+NAME
+  ticker - delayed market prices and mini charts in the terminal
+
+SYNOPSIS
+  ticker [SYMBOL...]
+  ticker -s <text>
+  ticker -c SYMBOL [range]
+
+DESCRIPTION
+  Prints the last price, the change and the change % (green up, red down) of stocks, indices, crypto, forex and futures, using the symbols of Yahoo Finance: AAPL, NVDA, BTC-USD, ^IXIC (NASDAQ), ^GSPC (S&P 500), ^DJI, GC=F (gold), EURUSD=X. Without symbols it shows the watchlist of the TradeView app.
+  Data comes from Yahoo Finance (unofficial, delayed, no key needed); for crypto Kraken is used when Yahoo does not answer. Requests are rate limited (one every 2 s, the same symbol at most once a minute); the last data is kept in /os/tradeview/cache. The server must allow HTTP to query1.finance.yahoo.com (and api.kraken.com).
+  For fun, not financial advice.
+
+OPTIONS
+  -s text         search for a symbol by name or ticker
+  -c SYM [range]  draw a small chart; range is 1D 5D 1M 6M 1Y or 5Y (default 1D)
+  --help          show the usage
+
+EXAMPLES
+  ticker BTC-USD ^IXIC
+  ticker -s apple
+  ticker -c GC=F 1Y

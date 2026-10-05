@@ -18,6 +18,8 @@ built for modded Minecraft worlds.
   (Calculator, Stopwatch, Notes, Paint), plus terminal commands; also `apt install <pkg>` in the terminal
 - **MineView**: TradingView for your resources: candle charts per item (1m to 1d), produced vs used per period,
   watchlist with 1h change; records chests / barrels (also over wired modems) or AE2 / RS via Advanced Peripherals
+- **TradeView**: real markets (stocks, indices, crypto, gold, forex) with candles or line chart (1D to 5Y), crosshair,
+  watchlist and search; delayed Yahoo Finance data, also `ticker BTC-USD ^IXIC` in the terminal. Not financial advice
 - **To-Do**: tasks with priorities (start with `!` or `!!`), tick them off, filters, saved on the computer
 - **System Monitor**: overview plus debug pages: network traffic, all drones, Claude API calls, error log, disk
 - **Lua Console**, **Terminal** (full CraftOS shell, with `btop` and `neofetch`), **Files**, **Editor**
@@ -141,7 +143,7 @@ Every command has a manual page: `man <command>`, or `man -k <word>` to search.
 - Everyday: `cat` `head` `tail` (`-f`) `grep` `wc` `touch` `tree` `du` `df` `free` `less` `sort` `rev` `seq` `factor`
   `base64` `sha256sum` `echo` `yes` `which` `env` `pwd` `ps` `nano` `vim`
 - System: `uname -a` `whoami` `hostname` `uptime` `date` `cal` `neofetch` `btop` (`top`, `htop`) `ping <id|label>`
-  `ifconfig` / `ip` `sudo` `apt`
+  `ifconfig` / `ip` `sudo` `apt` `ticker`
 - Fun: `cowsay -f warden` `fortune` `sl` `cmatrix` `asciiquarium` `hollywood` `lolcat` `figlet` `banner` `pacman`
 
 ## Display modes (Settings > Display)

@@ -190,6 +190,7 @@ TYPICAL = {
     "cowsay": ["moo", "moo", "this is a longer sentence for the bubble"], "fortune": [], "sl": [], "cmatrix": [],
     "lolcat": ["notes.txt"], "figlet": ["Hi 42!"], "banner": ["WOW"], "asciiquarium": [], "hollywood": [],
     "pacman": ["-Syu"], "less": ["notes.txt"], "more": ["notes.txt"], "neofetch": [], "btop": [],
+    "ticker": ["BTC-USD", "^IXIC"],
 }
 bins = sorted(f[:-4] for f in os.listdir(os.path.join(ROOT, "src/os/bin"))
               if f.endswith(".lua") and f != "apt.lua")          # apt (App Store) is tested on its own
