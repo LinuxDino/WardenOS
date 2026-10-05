@@ -1,0 +1,17 @@
+NAME
+  cmatrix - digital rain
+
+SYNOPSIS
+  cmatrix [-c color] [-s]
+
+DESCRIPTION
+  Characters rain down the screen, like the movie. q or Ctrl+T quits.
+
+OPTIONS
+  -c color  rain color (green, cyan, red, ...)
+  -s       slower
+  --help  show the usage
+
+EXAMPLES
+  cmatrix
+  cmatrix -c cyan

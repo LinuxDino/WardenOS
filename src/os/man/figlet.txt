@@ -1,0 +1,20 @@
+NAME
+  figlet - big letters
+
+SYNOPSIS
+  figlet [-c color] [-r] [-t] [-C char] <text>
+
+DESCRIPTION
+  Prints text in big letters, 5 lines high. Glyphs come from the WardenOS bigfont where it has them and from a built-in 3x5 font for every other letter, digit and common punctuation. Color screens get solid color blocks; other screens (or -t) get # characters. Long text is wrapped to the screen width.
+
+OPTIONS
+  -c color  letter color (default cyan)
+  -r        rainbow letters
+  -t        draw with # characters
+  -C char   draw with this character
+  --help  show the usage
+
+EXAMPLES
+  figlet Hello
+  figlet -r WardenOS
+  figlet -t -C * 42

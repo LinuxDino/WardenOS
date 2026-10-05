@@ -1,0 +1,11 @@
+NAME
+  asciiquarium - an aquarium
+
+SYNOPSIS
+  asciiquarium
+
+DESCRIPTION
+  Fish swim across the screen between bubbles and seaweed. q or Ctrl+T quits.
+
+EXAMPLES
+  asciiquarium

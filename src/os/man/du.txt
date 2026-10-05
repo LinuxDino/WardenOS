@@ -1,0 +1,19 @@
+NAME
+  du - disk usage of directories
+
+SYNOPSIS
+  du [-h] [-s] [-a] [-d N] [path]...
+
+DESCRIPTION
+  Shows how much space each directory takes up, counting all files below it, deepest directories first and the total last. Sizes are in KB (rounded up) unless -h is given. Note that -h means human readable here, like on Linux; use --help for help.
+
+OPTIONS
+  -h    human readable sizes (512, 1.5K, 2.0M)
+  -s    only the total for each path
+  -a    list files too
+  -d N  list directories at most N levels deep
+  --help  show the usage
+
+EXAMPLES
+  du -h /os
+  du -sh /

@@ -1,0 +1,11 @@
+NAME
+  more - page through a file
+
+SYNOPSIS
+  more <file>
+
+DESCRIPTION
+  The same as less.
+
+EXAMPLES
+  more /startup.lua

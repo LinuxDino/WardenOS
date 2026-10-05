@@ -1,0 +1,18 @@
+NAME
+  ping - check that a computer answers over rednet
+
+SYNOPSIS
+  ping [-c N] [-W secs] [-i secs] <id|label>
+
+DESCRIPTION
+  Sends WardenOS pings (rednet protocol "wardenos") to a computer, pocket or drone and prints every answer with its round trip time, like Linux ping. A label is looked up among the drones known to the desktop, or by asking every computer in range. It runs until Ctrl+T or q, then prints how many pings were sent and answered. A modem must be attached; ping opens it for rednet if needed.
+
+OPTIONS
+  -c N     stop after N pings
+  -W secs  wait this long for each answer (default 2)
+  -i secs  time between pings (default 1)
+  --help  show the usage
+
+EXAMPLES
+  ping 12
+  ping -c 3 miner

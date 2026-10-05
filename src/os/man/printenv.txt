@@ -1,0 +1,12 @@
+NAME
+  printenv - print the environment, or one value
+
+SYNOPSIS
+  printenv [name]
+
+DESCRIPTION
+  The same as env. With a name, prints only that value (and nothing if it is not set).
+
+EXAMPLES
+  printenv
+  printenv USER

@@ -1,0 +1,11 @@
+NAME
+  vi - edit a file (sort of)
+
+SYNOPSIS
+  vi <file>
+
+DESCRIPTION
+  The same as vim: a joke, then the CraftOS editor.
+
+EXAMPLES
+  vi notes.txt

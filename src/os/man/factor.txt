@@ -1,0 +1,12 @@
+NAME
+  factor - prime factors
+
+SYNOPSIS
+  factor <number>...
+
+DESCRIPTION
+  Prints each whole number followed by its prime factors.
+
+EXAMPLES
+  factor 360
+  factor 97 1024

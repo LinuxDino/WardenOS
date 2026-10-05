@@ -1,0 +1,16 @@
+NAME
+  head - the first lines of files
+
+SYNOPSIS
+  head [-n N] <file>...
+
+DESCRIPTION
+  Prints the first 10 lines of each file, or the first N. With several files, each one gets a ==> name <== header.
+
+OPTIONS
+  -n N  print N lines (also written -N, e.g. head -5)
+  --help  show the usage
+
+EXAMPLES
+  head -n 3 /os/config.lua
+  head -20 log.txt

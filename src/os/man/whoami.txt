@@ -1,0 +1,11 @@
+NAME
+  whoami - print the user name
+
+SYNOPSIS
+  whoami
+
+DESCRIPTION
+  Prints the name of the user logged in to the WardenOS desktop. Outside the desktop there is no login, so the computer's label is printed instead.
+
+EXAMPLES
+  whoami

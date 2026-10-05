@@ -1,0 +1,11 @@
+NAME
+  pacman - a package manager from another distro
+
+SYNOPSIS
+  pacman <anything>
+
+DESCRIPTION
+  Tells you that this is not Arch. WardenOS apps come from the App Store.
+
+EXAMPLES
+  pacman -Syu

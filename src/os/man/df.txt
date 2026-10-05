@@ -1,0 +1,17 @@
+NAME
+  df - free space on the drives
+
+SYNOPSIS
+  df [-h] [-k] [path]
+
+DESCRIPTION
+  Shows the size, used and free space of the computer's hard drive, of every floppy disk in a disk drive, and of the read-only ROM, each with a usage bar (green, yellow over 70%, red over 90%). With a path, only the drive that holds it is shown. On narrow screens each drive takes a few lines.
+
+OPTIONS
+  -h  human readable sizes (the default)
+  -k  sizes in KB
+  --help  show the usage
+
+EXAMPLES
+  df
+  df /disk

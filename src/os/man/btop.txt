@@ -1,0 +1,11 @@
+NAME
+  btop - live WardenOS system monitor
+
+SYNOPSIS
+  btop
+
+DESCRIPTION
+  A full-screen monitor that updates every second: disk usage, events per second, modems and rednet traffic, Claude's calls and tokens, and every drone with its fuel and task (drones Claude is driving are marked AI). Outside the desktop it pings the network itself to find drones. q or Ctrl+T quits. top and htop run it too.
+
+EXAMPLES
+  btop

@@ -1,0 +1,19 @@
+NAME
+  sort - sort lines
+
+SYNOPSIS
+  sort [-rnuf] <file>...
+
+DESCRIPTION
+  Prints all lines of the files in sorted order (byte order: upper case before lower case unless -f is given).
+
+OPTIONS
+  -r  reverse the order
+  -n  sort by the number at the start of each line
+  -u  print equal lines only once
+  -f  ignore case
+  --help  show the usage
+
+EXAMPLES
+  sort names.txt
+  sort -nr scores.txt

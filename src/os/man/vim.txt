@@ -1,0 +1,12 @@
+NAME
+  vim - edit a file (sort of)
+
+SYNOPSIS
+  vim <file>
+
+DESCRIPTION
+  Prints a vim joke and opens the file in the CraftOS editor. Press Ctrl for the menu; you will not need :q. vi is the same.
+
+EXAMPLES
+  vim startup.lua
+  vim :q

@@ -1,0 +1,15 @@
+NAME
+  touch - create a file or update its time
+
+SYNOPSIS
+  touch [-c] <file>...
+
+DESCRIPTION
+  Creates each file as an empty file if it does not exist. If it does, its modification time is updated and its contents are left alone.
+
+OPTIONS
+  -c  do not create missing files
+  --help  show the usage
+
+EXAMPLES
+  touch notes.txt

@@ -1,0 +1,16 @@
+NAME
+  ps - list running programs
+
+SYNOPSIS
+  ps [-a]
+
+DESCRIPTION
+  CraftOS cannot list its coroutines, so ps shows what can be seen: the BIOS, the startup file, the WardenOS desktop (with its open windows, if the desktop shares them), multishell tabs, the shell, and ps itself.
+
+OPTIONS
+  -a  also list the installed desktop apps
+  --help  show the usage
+
+EXAMPLES
+  ps
+  ps -a

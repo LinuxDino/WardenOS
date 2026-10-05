@@ -1,4 +1,12 @@
 -- btop: live WardenOS stats in the terminal. q (or Ctrl+T) quits.
+local arg1 = ...
+if arg1 == "-h" or arg1 == "--help" then
+  if term.isColour() then term.setTextColor(colors.cyan) end
+  print("Usage: btop")
+  if term.isColour() then term.setTextColor(colors.white) end
+  print("Live system monitor: disk, events, rednet, Claude and drones. q or Ctrl+T quits.")
+  return
+end
 local W, H = term.getSize()
 local color = term.isColour()
 local W_OS = rawget(_G, "WardenOS")

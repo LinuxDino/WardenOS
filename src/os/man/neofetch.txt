@@ -1,0 +1,11 @@
+NAME
+  neofetch - system information with a logo
+
+SYNOPSIS
+  neofetch
+
+DESCRIPTION
+  Prints the WardenOS logo next to information about this computer: user and label, WardenOS version, device, CraftOS and CC: Tweaked versions, uptime, screen size, monitors, disk usage, peripherals, turtle fuel, drones and the map. On color screens with the WardenOS art library the logo is the colored Warden. Lines that don't fit on small screens are left out.
+
+EXAMPLES
+  neofetch

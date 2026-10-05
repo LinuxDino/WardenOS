@@ -1,0 +1,18 @@
+NAME
+  tree - show a directory tree
+
+SYNOPSIS
+  tree [-L depth] [-a] [-d] [dir]
+
+DESCRIPTION
+  Lists a directory and everything below it as a tree, directories first and sorted by name, then prints how many directories and files there are. Directories are blue, Lua programs green and read-only files gray. Names starting with a dot are hidden unless -a is given.
+
+OPTIONS
+  -L N  go at most N levels deep
+  -a    show hidden files
+  -d    directories only
+  --help  show the usage
+
+EXAMPLES
+  tree /os
+  tree -L 1 /

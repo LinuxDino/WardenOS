@@ -1,0 +1,22 @@
+NAME
+  uname - system information
+
+SYNOPSIS
+  uname [-asnrvmo]
+
+DESCRIPTION
+  Prints information about the system. Without options it prints the system name. -a prints everything on one line: WardenOS, its version, the CC: Tweaked version (from _HOST) and the device type.
+
+OPTIONS
+  -a  everything
+  -s  system name (WardenOS)
+  -n  host name (the computer label)
+  -r  WardenOS version
+  -v  CC: Tweaked version
+  -m  device: Computer, Turtle, Pocket Computer...
+  -o  CraftOS version
+  --help  show the usage
+
+EXAMPLES
+  uname -a
+  uname -r

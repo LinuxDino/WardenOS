@@ -1,0 +1,18 @@
+NAME
+  ip - show network interfaces and routes
+
+SYNOPSIS
+  ip [a|addr|link|route]
+
+DESCRIPTION
+  Shows the network interfaces (modems) in the style of the Linux ip command. On rednet, a computer's address is its computer ID.
+
+OPTIONS
+  a, addr  interfaces with addresses (default)
+  link     interfaces only
+  route    which modems rednet sends through
+  --help  show the usage
+
+EXAMPLES
+  ip a
+  ip route

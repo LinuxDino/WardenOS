@@ -1,0 +1,17 @@
+NAME
+  fortune - a random saying
+
+SYNOPSIS
+  fortune [-c] [-a]
+
+DESCRIPTION
+  Prints a random saying about Minecraft, Linux and WardenOS.
+
+OPTIONS
+  -c  let the cow say it
+  -a  print all of them
+  --help  show the usage
+
+EXAMPLES
+  fortune
+  fortune -c

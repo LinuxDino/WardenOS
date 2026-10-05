@@ -1,0 +1,17 @@
+NAME
+  tail - the last lines of files, or follow one
+
+SYNOPSIS
+  tail [-n N] [-f] <file>...
+
+DESCRIPTION
+  Prints the last 10 lines of each file, or the last N. With -f it keeps watching the (last) file and prints every line that is added, until you press Ctrl+T or q. If the file gets shorter, tail says so and starts again from the top.
+
+OPTIONS
+  -n N  print N lines (also -N)
+  -f    follow the file as it grows
+  --help  show the usage
+
+EXAMPLES
+  tail -n 5 notes.txt
+  tail -f /logs/miner.txt

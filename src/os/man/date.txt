@@ -1,0 +1,19 @@
+NAME
+  date - print the date and time
+
+SYNOPSIS
+  date [-u] [-m] [+FORMAT]
+
+DESCRIPTION
+  Prints the real-world date and time, then the Minecraft day and time. A +FORMAT argument prints only the formatted date; it uses the codes of os.date: %Y year, %m month, %d day, %H hour, %M minute, %S second, %A weekday, %B month name, %j day of the year, %s seconds since 1970.
+
+OPTIONS
+  -u  use UTC
+  -m  only the Minecraft day and time
+  --help  show the usage
+
+EXAMPLES
+  date
+  date +%Y-%m-%d
+  date "+%H:%M"
+  date -m

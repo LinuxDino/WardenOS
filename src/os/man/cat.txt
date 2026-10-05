@@ -1,0 +1,17 @@
+NAME
+  cat - print files
+
+SYNOPSIS
+  cat [-n] [-b] <file>...
+
+DESCRIPTION
+  Prints each file to the screen, one after another. CC has no pipes or stdin, so cat always takes file names. Paths are relative to the current directory.
+
+OPTIONS
+  -n  number every line
+  -b  number only non-empty lines
+  --help  show the usage
+
+EXAMPLES
+  cat /startup.lua
+  cat -n notes.txt todo.txt

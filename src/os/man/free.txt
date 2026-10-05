@@ -1,0 +1,16 @@
+NAME
+  free - memory and storage
+
+SYNOPSIS
+  free [-h] [-b]
+
+DESCRIPTION
+  CC: Tweaked has no API that reports the computer's RAM, so free shows what can be measured honestly: the memory used by the Lua heap (collectgarbage("count")) and the computer's storage. Sizes are in KB unless -h or -b is given.
+
+OPTIONS
+  -h  human readable
+  -b  bytes
+  --help  show the usage
+
+EXAMPLES
+  free -h

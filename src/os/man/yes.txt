@@ -1,0 +1,12 @@
+NAME
+  yes - print a line forever
+
+SYNOPSIS
+  yes [text]
+
+DESCRIPTION
+  Prints y (or the text) over and over, until you press Ctrl+T or q.
+
+EXAMPLES
+  yes
+  yes I agree

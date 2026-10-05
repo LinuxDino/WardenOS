@@ -1,0 +1,19 @@
+NAME
+  seq - print a sequence of numbers
+
+SYNOPSIS
+  seq [-s sep] [-w] [first [step]] last
+
+DESCRIPTION
+  Prints the numbers from first (default 1) to last, counting by step (default 1, may be negative or a decimal).
+
+OPTIONS
+  -s sep  put sep between the numbers instead of new lines
+  -w      pad with leading zeros to the same width
+  --help  show the usage
+
+EXAMPLES
+  seq 5
+  seq 0 5 100
+  seq 10 -1 1
+  seq -s , 3

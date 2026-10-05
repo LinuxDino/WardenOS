@@ -1,0 +1,16 @@
+NAME
+  hostname - show or set the computer's name
+
+SYNOPSIS
+  hostname [-i] [name]
+
+DESCRIPTION
+  Without arguments, prints the computer's label (or computer-<id> when it has none). With a name, sets the label, the same as the CraftOS label set command. Labelled computers keep their files when broken.
+
+OPTIONS
+  -i  print the computer ID (its rednet address)
+  --help  show the usage
+
+EXAMPLES
+  hostname
+  hostname base-server

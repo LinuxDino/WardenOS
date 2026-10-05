@@ -1,0 +1,11 @@
+NAME
+  nano - edit a file
+
+SYNOPSIS
+  nano <file>
+
+DESCRIPTION
+  GNU nano is not available in CraftOS, so nano opens the file in the CraftOS editor. Press Ctrl to reach its menu (Save, Run, Exit, ...).
+
+EXAMPLES
+  nano notes.txt

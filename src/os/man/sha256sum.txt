@@ -1,0 +1,16 @@
+NAME
+  sha256sum - SHA-256 checksums
+
+SYNOPSIS
+  sha256sum [-s text] [file...]
+
+DESCRIPTION
+  Prints the SHA-256 checksum of each file followed by its name, or of the text given with -s. Uses the WardenOS SHA-256 library. Handy to check that two files are the same.
+
+OPTIONS
+  -s text  checksum this text
+  --help  show the usage
+
+EXAMPLES
+  sha256sum /startup.lua
+  sha256sum -s abc

@@ -99,14 +99,39 @@ local LOGO = {
 }
 local showLogo = W >= 40
 local lx = showLogo and (#LOGO[1] + 2) or 0
+-- the colored Warden from the WardenOS art library, when it is installed and fits next to the info
+local img
+if color and W >= 40 and fs.exists("/os/lib/art.lua") then
+  local okA, art = pcall(dofile, "/os/lib/art.lua")
+  if okA and type(art) == "table" and type(art.get) == "function" then
+    for _, size in ipairs({ "medium", "small" }) do
+      local okG, im = pcall(art.get, "warden", size)
+      if okG and type(im) == "table" and type(im.rows) == "table" and #im.rows > 0 then
+        local iw = tonumber(im.w or im[1]) or 0
+        for _, r in ipairs(im.rows) do iw = math.max(iw, #tostring(r[1] or r.text or "")) end
+        if iw <= W - 24 and #im.rows <= H - 1 then img, lx = im, iw + 2 break end
+      end
+    end
+  end
+end
 
 local _, y0 = term.getCursorPos()
-local rows = math.max(#info + 2, showLogo and #LOGO or 0)
+local rows = math.max(#info + 2, img and #img.rows or (showLogo and #LOGO or 0))
 for _ = 1, rows do print() end                     -- make room (scrolls if needed)
 local _, yEnd = term.getCursorPos()
 local top = yEnd - rows
 
-if showLogo then
+if img then
+  for i, r in ipairs(img.rows) do
+    local t, f, b = tostring(r[1] or r.text or ""), tostring(r[2] or r.fg or ""), tostring(r[3] or r.bg or "")
+    local n = math.min(#t, W)
+    if n > 0 then
+      term.setCursorPos(1, top + i - 1)
+      term.blit(t:sub(1, n), (f .. string.rep("0", n)):sub(1, n), (b .. string.rep("f", n)):sub(1, n))
+    end
+  end
+  term.setBackgroundColor(colors.black)
+elseif showLogo then
   for i, l in ipairs(LOGO) do
     term.setCursorPos(1, top + i - 1)
     c(i == #LOGO and colors.lightGray or colors.cyan)

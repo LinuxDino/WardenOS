@@ -1,0 +1,16 @@
+NAME
+  lolcat - rainbow text
+
+SYNOPSIS
+  lolcat [-s n] <file...|text>
+
+DESCRIPTION
+  Prints files in rainbow colors. If the arguments are not files, the text itself is printed. On screens without colors the text is printed plainly.
+
+OPTIONS
+  -s n  characters per color (default 2)
+  --help  show the usage
+
+EXAMPLES
+  lolcat /os/man/lolcat.txt
+  lolcat Hello there

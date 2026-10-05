@@ -1,0 +1,18 @@
+NAME
+  base64 - encode or decode base64
+
+SYNOPSIS
+  base64 [-d] [-w cols] <file|text>
+
+DESCRIPTION
+  Encodes a file to base64, or decodes it with -d. If the argument is not a file, the text itself is used. Encoded output is wrapped at the screen width.
+
+OPTIONS
+  -d       decode
+  -w cols  wrap at cols characters (0 = do not wrap)
+  --help  show the usage
+
+EXAMPLES
+  base64 hello
+  base64 -d aGVsbG8=
+  base64 /startup.lua

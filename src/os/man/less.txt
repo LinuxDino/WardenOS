@@ -1,0 +1,16 @@
+NAME
+  less - page through a file
+
+SYNOPSIS
+  less [-N] <file>
+
+DESCRIPTION
+  Shows a file one screen at a time. Up/down or j/k scroll a line, space or f and b scroll a page, g and G jump to the start and end, the mouse wheel scrolls too. q or Ctrl+T quits. Files that fit on the screen are simply printed. more is the same.
+
+OPTIONS
+  -N  number the lines
+  --help  show the usage
+
+EXAMPLES
+  less /os/kernel.lua
+  less -N notes.txt

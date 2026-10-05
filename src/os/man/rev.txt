@@ -1,0 +1,12 @@
+NAME
+  rev - reverse lines
+
+SYNOPSIS
+  rev <file...|text>
+
+DESCRIPTION
+  Prints every line of the files with its characters in reverse order. If the arguments are not all files, the text itself is reversed.
+
+EXAMPLES
+  rev notes.txt
+  rev hello world

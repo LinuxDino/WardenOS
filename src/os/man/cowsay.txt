@@ -1,0 +1,19 @@
+NAME
+  cowsay - a talking cow
+
+SYNOPSIS
+  cowsay [-f cow|tux|warden] [-e eyes] [-l] <text>
+
+DESCRIPTION
+  Draws an animal with your text in a speech bubble. The bubble is wrapped to fit the screen. The Warden is drawn in color from the WardenOS art library when it is installed and the screen has colors, and as ASCII art otherwise.
+
+OPTIONS
+  -f name  who talks: cow (default), tux or warden
+  -e eyes  the cow's eyes, e.g. -e ^^
+  -l       list the animals
+  --help  show the usage
+
+EXAMPLES
+  cowsay Hello
+  cowsay -f warden Shhh... it can hear you
+  fortune -c

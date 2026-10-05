@@ -1,0 +1,17 @@
+NAME
+  uptime - how long the computer has been on
+
+SYNOPSIS
+  uptime [-p] [-s]
+
+DESCRIPTION
+  Prints the time, how long the computer has been running (since it was turned on or rebooted), the number of logged-in desktop users, and, inside the WardenOS desktop, the load: events per minute and rednet messages per minute from the WardenOS log.
+
+OPTIONS
+  -p  pretty: up 1 hour, 2 minutes
+  -s  how many seconds ago it started
+  --help  show the usage
+
+EXAMPLES
+  uptime
+  uptime -p

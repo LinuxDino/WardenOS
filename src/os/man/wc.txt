@@ -1,0 +1,18 @@
+NAME
+  wc - count lines, words and bytes
+
+SYNOPSIS
+  wc [-lwc] <file>...
+
+DESCRIPTION
+  Prints the number of lines, words and bytes in each file, and a total when there are several files.
+
+OPTIONS
+  -l  lines only
+  -w  words only
+  -c  bytes only
+  --help  show the usage
+
+EXAMPLES
+  wc /startup.lua
+  wc -l a.lua b.lua

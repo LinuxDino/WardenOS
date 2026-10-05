@@ -1,0 +1,16 @@
+NAME
+  sudo - run a command as root
+
+SYNOPSIS
+  sudo [-k] <command> [args...]
+
+DESCRIPTION
+  A CC computer has no users or permissions: every program can already do everything. sudo still behaves like the real one: the first time it gives you the usual lecture and asks for your password (any password works, and it is remembered for 5 minutes), then it runs the command.
+
+OPTIONS
+  -k  forget the password, so the next sudo asks again
+  --help  show the usage
+
+EXAMPLES
+  sudo edit /startup.lua
+  sudo make me a sandwich

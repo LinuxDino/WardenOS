@@ -1,0 +1,18 @@
+NAME
+  man - manual pages
+
+SYNOPSIS
+  man [-k [word]] <command>
+
+DESCRIPTION
+  Shows the manual page of a command. WardenOS pages are plain text files in /os/man/<command>.txt; for CraftOS programs the built-in help topic is shown, and for any other program its --help. Long pages open in a pager: up/down or j/k scroll a line, space and b scroll a page, g and G jump to the start and end, q or Ctrl+T quits.
+
+OPTIONS
+  -k word  list the commands whose short description contains word (all of them without a word)
+  --help  show the usage
+
+EXAMPLES
+  man grep
+  man -k
+  man -k rednet
+  man man

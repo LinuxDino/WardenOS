@@ -1,0 +1,18 @@
+NAME
+  echo - print text
+
+SYNOPSIS
+  echo [-n] [-e] [text...]
+
+DESCRIPTION
+  Prints its arguments separated by spaces. Color tags change the text color: {red}, {green}, {blue}, {yellow}, {orange}, {cyan}, {lime}, {magenta}, {pink}, {purple}, {white}, {gray}, {lightGray}, {black}, {brown}, {lightBlue}; {reset} goes back to white.
+
+OPTIONS
+  -n  do not end with a new line
+  -e  turn \n into a new line and \t into spaces
+  --help  show the usage
+
+EXAMPLES
+  echo Hello world
+  echo {red}ERROR{reset} disk full
+  echo -e line1\nline2

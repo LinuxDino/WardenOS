@@ -1,0 +1,11 @@
+NAME
+  htop - live system monitor
+
+SYNOPSIS
+  htop
+
+DESCRIPTION
+  Runs btop, the WardenOS system monitor. q or Ctrl+T quits.
+
+EXAMPLES
+  htop

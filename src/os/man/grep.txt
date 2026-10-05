@@ -1,0 +1,24 @@
+NAME
+  grep - print lines that match a pattern
+
+SYNOPSIS
+  grep [-inrvFcl] <pattern> <file|dir>...
+
+DESCRIPTION
+  Searches files for lines matching a Lua pattern and prints them with the match highlighted. Lua patterns are not regular expressions: use %d for a digit, %a for a letter, . for any character, * + - ? for repeats, ^ and $ for the start and end of the line, and % to escape a magic character (e.g. %. for a dot). Use -F to search for plain text instead. With several files (or -r) every line starts with the file name.
+
+OPTIONS
+  -i  ignore upper/lower case
+  -n  show line numbers
+  -r  search directories recursively (default: the current directory)
+  -v  print the lines that do NOT match
+  -F  plain text, not a pattern
+  -c  only count matching lines
+  -l  only list the files that match
+  --help  show the usage
+
+EXAMPLES
+  grep -n local /startup.lua
+  grep -ri fuel /os
+  grep "^%s*function" prog.lua
+  grep -F 1.5 notes.txt

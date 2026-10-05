@@ -1,0 +1,11 @@
+NAME
+  banner - big letters made of #
+
+SYNOPSIS
+  banner <text>
+
+DESCRIPTION
+  Prints the text in big letters made of # characters (the same as figlet -t).
+
+EXAMPLES
+  banner HAPPY BIRTHDAY

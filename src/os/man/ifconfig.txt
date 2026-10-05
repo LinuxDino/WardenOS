@@ -1,0 +1,11 @@
+NAME
+  ifconfig - show network interfaces
+
+SYNOPSIS
+  ifconfig
+
+DESCRIPTION
+  Lists the computer's network interfaces: the loopback (with the computer ID, which is its rednet address, and the label) and every attached modem, wired, wireless or ender, with whether rednet is open on it and which rednet channels are open.
+
+EXAMPLES
+  ifconfig

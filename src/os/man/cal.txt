@@ -1,0 +1,17 @@
+NAME
+  cal - show a calendar
+
+SYNOPSIS
+  cal [-m] [[month] year]
+
+DESCRIPTION
+  Shows a calendar of the current month with today highlighted. Give a month and a year to see another month, or just a year to see January (or this month, for the current year). Weekends are dimmed.
+
+OPTIONS
+  -m  weeks start on Monday
+  --help  show the usage
+
+EXAMPLES
+  cal
+  cal 12 2026
+  cal -m 2 2024

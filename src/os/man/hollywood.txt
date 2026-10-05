@@ -1,0 +1,11 @@
+NAME
+  hollywood - look very busy
+
+SYNOPSIS
+  hollywood
+
+DESCRIPTION
+  Fills the screen with hex dumps, progress bars and dramatic messages, like a hacker in a movie. Nothing is actually done. q or Ctrl+T quits.
+
+EXAMPLES
+  hollywood

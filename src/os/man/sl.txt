@@ -1,0 +1,15 @@
+NAME
+  sl - steam locomotive
+
+SYNOPSIS
+  sl [-l]
+
+DESCRIPTION
+  A steam locomotive drives across the screen. It is what you get for typing sl when you meant ls. Press q or Ctrl+T to make it go away sooner.
+
+OPTIONS
+  -l  a little one
+  --help  show the usage
+
+EXAMPLES
+  sl

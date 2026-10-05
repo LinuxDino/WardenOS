@@ -1,0 +1,16 @@
+NAME
+  which - locate a command
+
+SYNOPSIS
+  which [-a] <command>...
+
+DESCRIPTION
+  Prints the file that the shell would run for each command, following shell aliases (for example ls is an alias for the list program). Commands that cannot be found are reported with the search path.
+
+OPTIONS
+  -a  also show the alias a command goes through
+  --help  show the usage
+
+EXAMPLES
+  which ls
+  which cowsay neofetch

@@ -1,0 +1,11 @@
+NAME
+  top - live system monitor
+
+SYNOPSIS
+  top
+
+DESCRIPTION
+  Runs btop: disk, events per second, rednet traffic, Claude and your drones, updated every second. q or Ctrl+T quits. htop is the same.
+
+EXAMPLES
+  top
