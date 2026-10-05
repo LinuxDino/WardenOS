@@ -22,3 +22,4 @@ jobs:
       - run: python3 tests/test_ui.py
       - run: python3 tests/test_tradeview.py
       - run: python3 tests/test_me.py
+      - run: python3 tests/test_gps.py

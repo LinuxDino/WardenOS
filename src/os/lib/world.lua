@@ -6,11 +6,14 @@
 --                  and samples the storage in its own coroutine (never blocks this handler)
 --   W.drones       [id] = latest turtle status + seen (os.clock()); shared as WardenOS.drones with the apps,
 --                  the pocket server and Claude
+--   W.gpsHosts     [id] = latest Warden GPS host announcement + seen (os.clock()); shared as WardenOS.gpsHosts
+--   W.gpsHost      the background Warden GPS host (/os/gps/core.lua) when /os/gps/host.cfg says mode = "desktop";
+--                  shared as WardenOS.gpsHost. It answers GPS pings while the desktop runs
 local PROTO = "wardenos"
 local FLUSH_EVERY = 5                           -- seconds between map writes
 local PUSH_EVERY = 10                           -- seconds between protect pushes to one drone
 
-local W = { drones = {} }
+local W = { drones = {}, gpsHosts = {} }
 local me = os.getComputerID()
 local map
 local okm, m = pcall(dofile, "/os/lib/map.lua")
@@ -35,6 +38,21 @@ do
   end
 end
 W.mineview = mineview
+local gpsHost                                   -- background Warden GPS host (optional)
+do
+  local okc, core = pcall(dofile, "/os/gps/core.lua")
+  local cfg = okc and type(core) == "table" and core.read()
+  if cfg and cfg.mode == "desktop" then
+    local okn, h = pcall(core.new, cfg)
+    if okn and type(h) == "table" then
+      gpsHost = h
+      pcall(h.open)
+    end
+  end
+  local G = rawget(_G, "WardenOS")
+  if type(G) == "table" then G.gpsHosts = W.gpsHosts G.gpsHost = gpsHost end
+end
+W.gpsHost = gpsHost
 
 local seq = 3000000 + math.random(0, 99999) * 10   -- far from the Drones app, Claude and the pocket relay
 local lastPush = {}                             -- [drone id] = os.clock() of the last protect push
@@ -90,8 +108,14 @@ function W.event(ev)
       onStatus(from, msg)
     elseif msg.t == "map" and map and type(msg.obs) == "table" then
       map.add(msg.obs)
+    elseif msg.t == "gps_host" and tonumber(msg.x) and tonumber(msg.y) and tonumber(msg.z) then
+      local d = {}
+      for k, v in pairs(msg) do d[k] = v end
+      d.seen = os.clock()
+      W.gpsHosts[from] = d
     end
   end
+  if gpsHost then pcall(gpsHost.event, ev) end
   if mineview then pcall(mineview.event, ev) end
   if os.clock() - lastFlush >= FLUSH_EVERY then flushMap() end
 end

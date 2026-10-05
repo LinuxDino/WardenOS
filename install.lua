@@ -5,9 +5,12 @@
 --   install update     update to the latest version, keeps accounts, settings and your files
 --   install <branch>   use another branch of the repository (works with "update" too)
 --   install update -y  update without asking (used by Settings > Update now)
+--   install gps        set this computer up as a Warden GPS host (also: G on the welcome screen)
+--   install desktop    the WardenOS desktop setup, also on a computer that is a GPS host now
 --
 -- On a turtle it installs the WardenOS drone agent instead (no erase, no desktop).
 -- On an Advanced Pocket Computer it installs WardenOS Pocket (no erase, no desktop).
+-- On a standard (non-Advanced) computer it offers the Warden GPS host (no erase, no desktop).
 
 local REPO, BRANCH = "LinuxDino/WardenOS", "main"
 local TOS_VERSION, STEPS = "1.0", 5
@@ -15,9 +18,12 @@ local ABORT = {}
 local erased = false
 
 local mode, branch, yes = "install", BRANCH, false
+local gpsArg, desktopArg = false, false
 for _, a in ipairs({ ... }) do
   if a == "update" then mode = "update"
   elseif a == "-y" then yes = true
+  elseif a == "gps" then gpsArg = true
+  elseif a == "desktop" then desktopArg = true
   elseif a ~= "" then branch = a end
 end
 local RAW = "https://raw.githubusercontent.com/" .. REPO .. "/" .. branch .. "/"
@@ -30,10 +36,25 @@ if not http then
 end
 local isTurtle = turtle ~= nil
 local isPocket = pocket ~= nil and not isTurtle
+local isColour = term.isColour()
+-- Warden GPS host: a standard computer can only be one; a dedicated host stays one unless "install desktop"
+local GPS_CFG = "/os/gps/host.cfg"
+local function readGpsCfg()
+  if not fs.exists(GPS_CFG) then return nil end
+  local f = fs.open(GPS_CFG, "r")
+  if not f then return nil end
+  local d = textutils.unserialize(f.readAll() or "")
+  f.close()
+  if type(d) == "table" and tonumber(d.x) and tonumber(d.y) and tonumber(d.z) then return d end
+  return nil
+end
+local gpsCfg = readGpsCfg()
+local gpsDedicated = gpsCfg ~= nil and gpsCfg.mode ~= "desktop" and not fs.exists("/os/kernel.lua")
 -- pockets install even without colour/touch (the pocket UI also works with the keyboard)
-if not isTurtle and not isPocket and not term.isColour() then
-  printError("WardenOS needs an Advanced Computer (gold).")
-  print("Turtles can run the WardenOS drone agent: run this installer on a turtle.")
+local gpsOnly = not isTurtle and not isPocket and (gpsArg or not isColour or (gpsDedicated and not desktopArg))
+if gpsOnly and not isColour and desktopArg then
+  printError("The WardenOS desktop needs an Advanced Computer (gold).")
+  print("This computer can be a Warden GPS host: run the installer without 'desktop'.")
   return
 end
 
@@ -69,7 +90,8 @@ local function download()
   term.clear()
   term.setCursorPos(1, 1)
   term.setTextColor(colors.cyan)
-  print(isTurtle and "WardenOS drone installer" or (isPocket and "WardenOS Pocket installer" or "WardenOS installer"))
+  print(isTurtle and "WardenOS drone installer" or (isPocket and "WardenOS Pocket installer"
+    or (gpsOnly and "Warden GPS installer" or "WardenOS installer")))
   term.setTextColor(colors.lightGray)
   print(REPO .. " @ " .. branch)
   print()
@@ -77,7 +99,8 @@ local function download()
   local fn, err = load(fetch("manifest.lua"), "=manifest.lua", "t", {})
   if not fn then error("broken manifest: " .. tostring(err), 0) end
   local ok, m = pcall(fn)
-  local list = ok and type(m) == "table" and (isTurtle and m.drone or (isPocket and m.pocket or m.files))
+  local list = ok and type(m) == "table" and (isTurtle and m.drone or (isPocket and m.pocket
+    or (gpsOnly and m.gps or m.files)))
   if type(list) ~= "table" or #list == 0 then
     error("broken manifest", 0)
   end
@@ -155,7 +178,7 @@ if isTurtle then
       for _, p in ipairs({ "/os/users.dat", "/os/settings.lua", "/os/boot.cfg", "/os/files.dat" }) do
         if fs.exists(p) then fs.delete(p) end
       end
-      for _, d in ipairs({ "/os/apps", "/os/lib", "/os/pocket", "/os/bin", "/os/man" }) do
+      for _, d in ipairs({ "/os/apps", "/os/lib", "/os/pocket", "/os/bin", "/os/man", "/os/gps" }) do
         if fs.isDir(d) and #fs.list(d) == 0 then fs.delete(d) end
       end
     elseif fs.exists("/startup.lua") and not fs.exists("/os/drone/agent.lua") and not fs.exists("/startup.old.lua") then
@@ -213,7 +236,7 @@ if isPocket then
       for _, p in ipairs({ "/os/users.dat", "/os/settings.lua", "/os/boot.cfg", "/os/files.dat" }) do
         if fs.exists(p) then fs.delete(p) end
       end
-      for _, d in ipairs({ "/os/apps", "/os/lib", "/os/drone", "/os/bin" }) do
+      for _, d in ipairs({ "/os/apps", "/os/lib", "/os/drone", "/os/bin", "/os/gps" }) do
         if fs.isDir(d) and #fs.list(d) == 0 then fs.delete(d) end
       end
     elseif fs.exists("/startup.lua") and not fs.exists("/os/pocket/main.lua") and not fs.exists("/startup.old.lua") then
@@ -237,6 +260,191 @@ if isPocket then
   end
   local ok, err = pcall(pocketInstall)
   if not ok then
+    if tostring(err):find("Terminated") then print("Cancelled.") else printError("Install failed: " .. tostring(err)) end
+  end
+  return
+end
+
+---------------------------------------------------------------- Warden GPS host (any computer with a wireless modem)
+-- plain print/read, so it works on a standard computer too; also reached from the desktop welcome screen (G)
+local function gpsInstall()
+  local hasDesktop = fs.exists("/os/kernel.lua")
+  local function say(s, c)
+    term.setTextColor(isColour and c or colors.white)
+    print(s)
+    term.setTextColor(colors.white)
+  end
+  local function ask(q)
+    term.setTextColor(colors.white)
+    write(q)
+    return read()
+  end
+  local function yesNo(q, default)
+    say(q .. (default and " (Y/n)" or " (y/n)"), colors.white)
+    while true do
+      local a = ask("> "):lower()
+      if a == "" and default ~= nil then return default end
+      if a == "y" or a == "yes" then return true end
+      if a == "n" or a == "no" then return false end
+    end
+  end
+  local function cancel()
+    say("Cancelled. Nothing was changed.", colors.lightGray)
+    error(ABORT, 0)
+  end
+  local function wirelessModems()
+    local out = {}
+    for _, n in ipairs(peripheral.getNames()) do
+      if peripheral.getType(n) == "modem" then
+        local ok, w = pcall(peripheral.call, n, "isWireless")
+        if ok and w then out[#out + 1] = n end
+      end
+    end
+    return out
+  end
+
+  term.setBackgroundColor(colors.black)
+  term.clear()
+  term.setCursorPos(1, 1)
+  say("Warden GPS host setup", colors.cyan)
+  say("A GPS host tells turtles, pockets and computers where they are. You need 4 or more hosts, not all in one flat plane.",
+      colors.lightGray)
+  if not isColour and not gpsArg then
+    say("(The WardenOS desktop needs an Advanced Computer; this computer can be a GPS host.)", colors.lightGray)
+  end
+  print()
+
+  local cfg
+  local old = gpsCfg
+  if old and (yes or mode == "update") then
+    cfg = { x = math.floor(old.x), y = math.floor(old.y), z = math.floor(old.z), mode = old.mode == "desktop" and "desktop" or "dedicated" }
+  elseif old then
+    say(("This computer is a Warden GPS host at %d %d %d (%s)."):format(old.x, old.y, old.z,
+        old.mode == "desktop" and "with the desktop" or "dedicated"), colors.yellow)
+    if yesNo("Keep this position and update?", true) then
+      cfg = { x = math.floor(old.x), y = math.floor(old.y), z = math.floor(old.z), mode = old.mode == "desktop" and "desktop" or "dedicated" }
+    end
+  end
+
+  if not cfg then
+    cfg = { mode = "dedicated" }
+    if hasDesktop then
+      say("WardenOS desktop is installed here.", colors.yellow)
+      say(" B  background: keep the desktop, it also answers GPS", colors.white)
+      say(" D  dedicated: remove the desktop (accounts, settings), run only the GPS host", colors.white)
+      say(" Q  cancel", colors.white)
+      while true do
+        local a = ask("B/D/Q> "):lower()
+        if a == "b" then cfg.mode = "desktop" break end
+        if a == "d" then cfg.mode = "dedicated" break end
+        if a == "q" then cancel() end
+      end
+    end
+
+    local modems = wirelessModems()
+    if #modems == 0 then
+      say("No wireless or ender modem found. Attach one (ender modems reach everywhere); the host waits for it.",
+          colors.red)
+    end
+
+    -- the position: from other hosts, from an old `gps host` startup, or typed in
+    local guess
+    if #modems > 0 and FILES["/os/lib/gpsx.lua"] then
+      if yesNo("Detect this position from GPS hosts that already run?", true) then
+        say("Locating...", colors.lightGray)
+        local okg, gx = pcall(function() return assert(load(FILES["/os/lib/gpsx.lua"], "=gpsx.lua", "t", _G))() end)
+        local r, why
+        if okg and type(gx) == "table" then r, why = gx.locate({ samples = 3, timeout = 2 }) else why = tostring(gx) end
+        if r and r.quality ~= "noisy" then
+          guess = { r.x, r.y, r.z, ("found with %d hosts, %s fix"):format(r.hosts, r.quality) }
+        else
+          say("No reliable fix: " .. tostring(r and "the hosts disagree" or why), colors.yellow)
+        end
+      end
+    end
+    if not guess and fs.exists("/startup.lua") then
+      local f = fs.open("/startup.lua", "r")
+      local src = f and f.readAll() or ""
+      if f then f.close() end
+      local x, y, z = src:match("[\"']gps[\"']%s*,%s*[\"']host[\"']%s*,%s*[\"']?(%-?%d+)[\"']?%s*,%s*[\"']?(%-?%d+)[\"']?%s*,%s*[\"']?(%-?%d+)")
+      if x then guess = { tonumber(x), tonumber(y), tonumber(z), "from the old gps host startup" } end
+    end
+    if guess and not yesNo(("Use %d %d %d (%s)?"):format(guess[1], guess[2], guess[3], guess[4]), true) then
+      guess = nil
+    end
+    if guess then
+      cfg.x, cfg.y, cfg.z = guess[1], guess[2], guess[3]
+    else
+      say("Type the position of THIS COMPUTER's block: look at it, press F3, read 'Targeted Block'.", colors.lightGray)
+      while true do
+        local a = ask("x y z> "):gsub(",", " ")
+        if a:lower() == "q" then cancel() end
+        local x, y, z = a:match("^%s*(%-?%d+)%s+(%-?%d+)%s+(%-?%d+)%s*$")
+        if x then
+          cfg.x, cfg.y, cfg.z = tonumber(x), tonumber(y), tonumber(z)
+          break
+        end
+        say("Three whole numbers, like: 120 200 -45  (Q cancels)", colors.red)
+      end
+    end
+    if cfg.y < -64 or cfg.y > 320 then say("Note: y = " .. cfg.y .. " is outside the usual world height.", colors.yellow) end
+    if cfg.y < 64 then say("Tip: GPS hosts work best high up (y 128+); wireless range grows with height.", colors.lightGray) end
+    print()
+    say(("GPS host at %d %d %d, %s."):format(cfg.x, cfg.y, cfg.z,
+        cfg.mode == "desktop" and "runs in the background of the desktop" or "dedicated (starts on boot)"), colors.white)
+    if cfg.mode == "dedicated" and hasDesktop then
+      say("The WardenOS desktop, its accounts and settings are removed. Your own files stay.", colors.red)
+    end
+    if not yesNo("Install?", nil) then cancel() end
+  end
+
+  -- write
+  local gpsFiles = {}
+  for _, p in ipairs(MANIFEST.gps or {}) do gpsFiles["/" .. p] = true end
+  local function put(path, data)
+    local dir = fs.getDir(path)
+    if dir ~= "" then fs.makeDir(dir) end
+    local f = assert(fs.open(path, "w"))
+    f.write(data)
+    f.close()
+  end
+  if cfg.mode == "dedicated" then
+    if hasDesktop then
+      for _, p in ipairs(MANIFEST.files) do
+        local path = "/" .. p
+        if path ~= "/startup.lua" and not gpsFiles[path] and fs.exists(path) and not fs.isDir(path) then fs.delete(path) end
+      end
+      for _, p in ipairs({ "/os/users.dat", "/os/settings.lua", "/os/boot.cfg", "/os/files.dat" }) do
+        if fs.exists(p) then fs.delete(p) end
+      end
+      for _, d in ipairs({ "/os/apps", "/os/lib", "/os/drone", "/os/pocket", "/os/bin", "/os/man" }) do
+        if fs.isDir(d) and #fs.list(d) == 0 then fs.delete(d) end
+      end
+    elseif fs.exists("/startup.lua") and not fs.exists("/os/gps/host.lua") and not fs.exists("/startup.old.lua") then
+      fs.copy("/startup.lua", "/startup.old.lua")
+    end
+  end
+  for path in pairs(gpsFiles) do
+    if FILES[path] then
+      if path == "/os/gps/startup.lua" then
+        if cfg.mode == "dedicated" then put("/startup.lua", FILES[path]) end
+        if hasDesktop and cfg.mode == "desktop" then put(path, FILES[path]) end
+      elseif not (path == "/os/config.lua" and cfg.mode == "desktop") then   -- the desktop keeps its own config
+        put(path, FILES[path])
+      end
+    end
+  end
+  if cfg.mode == "dedicated" and fs.exists("/os/gps/startup.lua") then fs.delete("/os/gps/startup.lua") end
+  put(GPS_CFG, textutils.serialize({ x = cfg.x, y = cfg.y, z = cfg.z, mode = cfg.mode }))
+  if not os.getComputerLabel() then os.setComputerLabel("gps-" .. os.getComputerID()) end
+  say(("Warden GPS host %s at %d %d %d. Rebooting..."):format(OS_VERSION, cfg.x, cfg.y, cfg.z), colors.green)
+  sleep(1)
+  os.reboot()
+end
+
+if gpsOnly then
+  local ok, err = pcall(gpsInstall)
+  if not ok and err ~= ABORT then
     if tostring(err):find("Terminated") then print("Cancelled.") else printError("Install failed: " .. tostring(err)) end
   end
   return
@@ -392,13 +600,16 @@ local function welcome()
   y = say(y + 2, "Clean install: terms, account, then a full disk erase.", colors.lightGray, true)
   local installed = fs.exists("/os/kernel.lua")
   if installed then
-    say(y + 1, "WardenOS is already installed. Press U to update and keep your accounts.", colors.yellow, true)
+    y = say(y + 1, "WardenOS is already installed. Press U to update and keep your accounts.", colors.yellow, true)
   end
-  footer(installed and "ENTER clean   U update   Q quit" or "ENTER begin    Q quit")
+  local gy = y + (installed and 0 or 1)
+  if gy <= H - 1 then say(gy, "G: Warden GPS host", colors.lightGray, true) end
+  footer(installed and "ENTER clean U upd G GPS" or "ENTER begin G GPS Q quit")
   while true do
     local _, k = os.pullEvent("key")
     if k == keys.enter then return "install" end
     if k == keys.u and installed then return "update" end
+    if k == keys.g then return "gps" end
     if k == keys.q then abort() end
   end
 end
@@ -719,7 +930,9 @@ end
 ---------------------------------------------------------------- run
 local function main()
   if mode == "update" then return update() end
-  if welcome() == "update" then return update() end
+  local choice = welcome()
+  if choice == "update" then return update() end
+  if choice == "gps" then return "gps" end
   terms()
   local acct = account()
   local plan = diskStep()
@@ -729,6 +942,13 @@ end
 
 local ok, err = pcall(main)
 S.close()
+if ok and err == "gps" then                     -- G on the welcome screen: the plain-text GPS host setup
+  local okg, gerr = pcall(gpsInstall)
+  if not okg and gerr ~= ABORT then
+    if tostring(gerr):find("Terminated") then print("Cancelled.") else printError("Install failed: " .. tostring(gerr)) end
+  end
+  return
+end
 if not ok then
   if err == ABORT or tostring(err):find("Terminated") then
     print(erased and "Setup interrupted AFTER erasing started. Run it again." or "Setup cancelled. Nothing was changed.")
