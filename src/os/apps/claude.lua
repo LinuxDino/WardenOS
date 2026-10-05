@@ -20,6 +20,7 @@ end
 return {
   name = "Claude", short = "AI", icon = "*", color = colors.orange, order = 2,
   w = 48, h = 18,
+  art = { { "\\||/", "1111", "7117" }, { "/||\\", "1111", "7117" } },   -- 4x2 icon (blit; bg 7 = panel)
   main = function()
     local T = WardenOS.theme
     local cfg = api.loadConfig()

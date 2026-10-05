@@ -5,6 +5,7 @@ local PRIO = { [0] = { "", nil }, { "!", "warn" }, { "!!", "bad" } }   -- none, 
 return {
   name = "To-Do", short = "ToDo", icon = "[v]", color = colors.lime, order = 7,
   w = 40, h = 16,
+  art = { { "v ==", "d077", "0000" }, { "o ==", "8077", "0000" } },   -- 4x2 icon (blit; bg 7 = panel)
   main = function()
     local T = WardenOS.theme
     local tasks, nextId = {}, 1

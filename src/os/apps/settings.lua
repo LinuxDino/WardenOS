@@ -4,6 +4,7 @@ local Settings = dofile("/os/lib/settings.lua")
 return {
   name = "Settings", short = "Set", icon = "{o}", color = colors.lightGray, order = 8,
   w = 44, h = 17,
+  art = { { "-O--", "8088", "7777" }, { "--O-", "8808", "7777" } },   -- 4x2 icon (blit; bg 7 = panel)
   main = function()
     local T = WardenOS.theme
     local TABS = { "System", "Display", "Theme", "Dock", "Boot" }

@@ -5,6 +5,7 @@ local both = {
   write = 1, blit = 1, clear = 1, clearLine = 1, scroll = 1,
   setCursorPos = 1, setCursorBlink = 1,
   setTextColor = 1, setTextColour = 1, setBackgroundColor = 1, setBackgroundColour = 1,
+  setPaletteColor = 1, setPaletteColour = 1,
 }
 
 local M = {}
@@ -58,7 +59,20 @@ function M.open(minW, minH, side)
   term.redirect(win)
 
   local S = { W = W, H = H, mon = mon, scr = scr, ui = ui, win = win }
+  local tinted = false
+  -- palette = { [colors.x] = 0xRRGGBB, ... } (a theme palette from /os/config.lua); undone by S.close()
+  function S.palette(palette)
+    for c, hex in pairs(palette) do pcall(ui.setPaletteColour, c, hex) end
+    tinted = true
+  end
   function S.close()
+    if tinted then
+      for i = 0, 15 do
+        local c = 2 ^ i
+        pcall(scr.setPaletteColour, c, term.nativePaletteColour(c))
+        if mon then pcall(mon.setPaletteColour, c, term.nativePaletteColour(c)) end
+      end
+    end
     term.redirect(scr)
     scr.setBackgroundColor(colors.black)
     scr.setTextColor(colors.white)

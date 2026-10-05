@@ -6,6 +6,7 @@ local PROTO = "wardenos"
 return {
   name = "Drones", short = "Drone", icon = "(T)", color = colors.orange, order = 7,
   w = 46, h = 18, openEvent = "drones_open",
+  art = { { "    ", "0000", "8ff8" }, { "    ", "0000", "8888" } },   -- 4x2 icon (blit; bg 7 = panel)
   main = function(arg)
     local T = WardenOS.theme
     local me = os.getComputerID()

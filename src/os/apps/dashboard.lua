@@ -364,6 +364,7 @@ end
 return {
   name = "Dashboard", short = "Dash", icon = "[=]", color = colors.lime, order = 5,
   w = 50, h = 20,
+  art = { { "    ", "0000", "7d74" }, { "    ", "0000", "5d94" } },   -- 4x2 icon (blit; bg 7 = panel)
   main = function()
     local T = WardenOS.theme
     local widgets = loadCfg()

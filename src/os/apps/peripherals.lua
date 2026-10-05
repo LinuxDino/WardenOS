@@ -3,6 +3,7 @@
 return {
   name = "Peripheral Inspector", short = "Peri", icon = "<>", color = colors.magenta, order = 5,
   w = 44, h = 18,
+  art = { { "-[]-", "8008", "7227" }, { "    ", "0000", "7227" } },   -- 4x2 icon (blit; bg 7 = panel)
   main = function()
     local T = WardenOS.theme
     local list, sel, methods = {}, nil, {}

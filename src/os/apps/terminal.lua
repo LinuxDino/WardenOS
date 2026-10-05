@@ -2,6 +2,7 @@
 return {
   name = "Terminal", short = "Term", icon = ">_", color = colors.cyan, order = 1,
   multi = true, w = 46, h = 16,
+  art = { { ">_  ", "9000", "ffff" }, { "    ", "0000", "8888" } },   -- 4x2 icon (blit; bg 7 = panel)
   main = function()
     local env = setmetatable({ shell = shell, multishell = false }, { __index = _G })
     term.setBackgroundColor(colors.black)

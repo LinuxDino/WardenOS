@@ -2,6 +2,7 @@
 return {
   name = "About", short = "About", icon = "i", color = colors.orange, order = 9,
   w = 36, h = 13,
+  art = { { " i  ", "0000", "9999" }, { "    ", "0000", "9999" } },   -- 4x2 icon (blit; bg 7 = panel)
   main = function()
     local T = WardenOS.theme
     while true do

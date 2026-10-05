@@ -8,6 +8,7 @@ local T = WardenOS.theme
 return {
   name = "System Monitor", short = "Sys", icon = "/\\", color = colors.green, order = 6,
   w = 52, h = 22,
+  art = { { "  /\\", "00dd", "ffff" }, { "\\/  ", "dd00", "ffff" } },   -- 4x2 icon (blit; bg 7 = panel)
   main = function()
     local log
     do

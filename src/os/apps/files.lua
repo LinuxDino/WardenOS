@@ -2,6 +2,7 @@
 return {
   name = "Files", short = "Files", icon = "[]", color = colors.yellow, order = 3,
   w = 34, h = 16,
+  art = { { "    ", "0000", "4477" }, { "    ", "0000", "4444" } },   -- 4x2 icon (blit; bg 7 = panel)
   main = function()
     local T = WardenOS.theme
     local cwd, scroll, items = "", 0, {}

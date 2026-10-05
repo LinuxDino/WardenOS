@@ -4,6 +4,7 @@ local PROTO = "wardenos"
 return {
   name = "Map", short = "Map", icon = "[#]", color = colors.lime, order = 7,
   w = 46, h = 18,
+  art = { { "   x", "000e", "5b55" }, { "    ", "0000", "dd5b" } },   -- 4x2 icon (blit; bg 7 = panel)
   main = function()
     local T = WardenOS.theme
     local map = dofile("/os/lib/map.lua")

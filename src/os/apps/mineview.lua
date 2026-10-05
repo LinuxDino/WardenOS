@@ -55,6 +55,7 @@ local MODE_INFO = {
 return {
   name = "MineView", short = "MView", icon = "$^", color = colors.lime, order = 9,
   w = 51, h = 20,
+  art = { { " |  ", "0d0e", "fffe" }, { "   |", "000e", "fdff" } },   -- 4x2 icon (blit; bg 7 = panel)
   main = function()
     local T = WardenOS.theme
     local MV = dofile("/os/lib/mineview.lua")
