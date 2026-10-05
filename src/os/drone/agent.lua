@@ -1,7 +1,7 @@
 -- WardenOS Drone agent (runs on a turtle)
 -- Reports status over rednet (protocol "wardenos") and takes commands from its owner computer.
 -- Installed by the WardenOS installer; started by /startup.lua.
-local VERSION = "1.8.2"
+local VERSION = "1.9.0"
 local PROTO = "wardenos"
 local CFG = "/os/drone/config"
 local NAV = "/os/drone/nav"
@@ -795,8 +795,22 @@ local function modems()
 end
 
 -- GPS position (rounded: gps.locate can answer 63.9999 for 64) from 3 samples that must agree; nil if there
--- is no GPS (hasGps = false) or the samples disagree (a GPS host moved or answers wrong)
+-- is no GPS (hasGps = false) or the samples disagree (a GPS host moved or answers wrong).
+-- With Warden GPS (/os/lib/gpsx.lua): every host that answers is used and a host with wrong coordinates is
+-- left out; events that arrive meanwhile (rednet commands) are queued again afterwards, nothing is lost.
+local gpsx = fs.exists("/os/lib/gpsx.lua") and select(2, pcall(dofile, "/os/lib/gpsx.lua")) or nil
 local function gpsFix(timeout)
+  if type(gpsx) == "table" and gpsx.locate then
+    local held = {}
+    local ok, r = pcall(gpsx.locate, { samples = 3, timeout = timeout or 1,
+                                       other = function(ev) held[#held + 1] = ev end })
+    for _, ev in ipairs(held) do os.queueEvent(table.unpack(ev, 1, ev.n or #ev)) end
+    if ok and type(r) == "table" and tonumber(r.x) then
+      if r.quality == "noisy" then return nil, "GPS answers disagree" end
+      pos, hasGps, dirty = { r.x, r.y, r.z }, true, true
+      return { x = r.x, y = r.y, z = r.z }
+    end
+  end                                            -- Warden GPS failed: try plain gps.locate
   local p
   for i = 1, 3 do
     local x, y, z = gps.locate(timeout or 1)
@@ -1783,6 +1797,15 @@ local function update()
   local f = fs.open("/os/drone/agent.lua", "w")
   f.write(src)
   f.close()
+  local g = http.get(RAW .. "src/os/lib/gpsx.lua?t=" .. os.epoch("utc"))   -- Warden GPS helper (optional)
+  if g then
+    local gs = g.readAll()
+    g.close()
+    if gs and load(gs, "=gpsx.lua", "t", {}) then
+      f = fs.open("/os/lib/gpsx.lua", "w")
+      if f then f.write(gs) f.close() end
+    end
+  end
   return true, "rebooting"
 end
 

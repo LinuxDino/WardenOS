@@ -7,9 +7,11 @@ built for modded Minecraft worlds.
 - **Settings** app: one-tap updates from GitHub, display mode, monitor text size, theme, dock, boot menu
 - Uses the whole monitor (any side, auto-detected) at a small, crisp text size; or mirror it, or use the computer alone
 - **Claude**: chat with Claude right on the in-game computer. Claude can run Lua, use files and peripherals, and
-  command the drones you give it, asking you first before anything risky
+  command the drones you give it, asking you first before anything risky. With an ME Bridge or RS Bridge
+  (Advanced Peripherals) it checks your stock and uses **autocrafting** for you
 - **Drones**: see every turtle and WardenOS computer on the network, live turtle status (task, fuel, position,
-  inventory, activity log), remote control, homes and one-tap "call back"
+  inventory, activity log), remote control, homes and one-tap "call back"; 3D pathfinding around obstacles,
+  fuel check before every trip, built-in tunnel / quarry / unload jobs, never digs chests or machines
 - **Warden GPS**: turn any computer into a GPS host from the installer; the **GPS** app checks your GPS setup,
   gives tips and locates more accurately than `gps locate`
 - **Peripheral Inspector**: browse every attached or networked peripheral from any mod and see its methods

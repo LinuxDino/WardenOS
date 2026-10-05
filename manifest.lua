@@ -2,7 +2,7 @@
 -- Add every new OS file here (tests/check.py verifies this list matches src/).
 -- Bump version together with src/os/config.lua and src/os/drone/agent.lua.
 return {
-  version = "1.8.2",
+  version = "1.9.0",
   files = {
     "startup.lua",
     "os/config.lua",
@@ -167,6 +167,7 @@ return {
   drone = {
     "os/drone/agent.lua",
     "os/drone/startup.lua",
+    "os/lib/gpsx.lua",
   },
   -- what a Warden GPS host gets (installer: "GPS host"; os/gps/startup.lua becomes /startup.lua on a dedicated host)
   gps = {

@@ -333,7 +333,7 @@ ok, err = run(rt, read("pastebin.lua"), "pastebin.lua")
 t4 = snapshot_fs(M)
 check(M.rebooted and t4.get("/notes.txt") == "keep" and t4.get("/startup.lua") == read("src/os/drone/startup.lua")
       and t4.get("/os/drone/agent.lua") == read("src/os/drone/agent.lua") and "/startup.old.lua" not in t4
-      and not [k for k in t4 if k.startswith("/os/") and not k.startswith("/os/drone")],
+      and not [k for k in t4 if k.startswith("/os/") and not k.startswith("/os/drone") and k not in ("/os/lib", "/os/lib/gpsx.lua")],
       "turtle with desktop: not cleaned up: %s %s" % (err, sorted(t4)))
 print("turtle install: ok" if not [f for f in fail if f.startswith("turtle install")] else "turtle install: FAILED")
 

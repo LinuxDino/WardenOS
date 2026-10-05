@@ -183,7 +183,7 @@ def setup(pos=(0, 64, 0, 0), world=None, fuel=None, inv=None, gps=False, extra="
     return "\n".join(out)
 
 
-def run_agent(events, pre=""):
+def run_agent(events, pre="", files=None):
     rt = lua.LuaRuntime(unpack_returned_tuples=True)
     g = rt.globals()
     g.HOST_READ = lambda p: read(p)
@@ -193,6 +193,8 @@ def run_agent(events, pre=""):
     g.SCRIPT_LINES = rt.table_from([])
     M = rt.execute(read("tests/mock_cc.lua"))
     rt.execute(PRELUDE, M)
+    for k, v in (files or {}).items():
+        M.FS[k] = v
     rt.execute(pre)
     f = rt.eval("function(src) local f, e = load(src, '=agent.lua', 't', _G) "
                 "if not f then return false, e end local ok, r = pcall(f) return ok, r end")
@@ -413,6 +415,23 @@ rt, M, err = run_agent([cmd("claim", 1), cmd("calibrate", 2), cmd("goto", 3, {"x
 lt, st = last(M), pinged(M)[-1]
 check(lt and lt.ok is True and true_pos(rt)[:3] == (10, 70, -30) and absof(st) == true_pos(rt),
       "gps spin: %s thinks %s is %s" % (lt_text(lt), absof(st), true_pos(rt)))
+# Warden GPS on the turtle (/os/lib/gpsx.lua): used instead of gps.locate; events heard meanwhile are not lost
+GPSX = """local G = {}
+function G.locate(o)
+  GPSX_CALLS = (GPSX_CALLS or 0) + 1
+  if o and o.other then o.other(table.pack("gpsx_test_event", GPSX_CALLS)) end
+  if not GPS_ON then return nil, "no GPS" end
+  return { x = POS.x, y = POS.y, z = POS.z, quality = "exact" }
+end
+return G"""
+rt, M, err = run_agent([cmd("claim", 1), cmd("calibrate", 2), cmd("goto", 3, {"x": 10, "y": 70, "z": -30})] + MANY * 2
+                       + [ping()], setup((10, 70, 20, 0), gps=True, extra="PUSH_AT = 5 gps.locate = nil"),
+                       files={"/os/lib": True, "/os/lib/gpsx.lua": GPSX})
+lt, st = last(M), pinged(M)[-1]
+check(acks(M).get(2) == (True, "calibrated 10 70 20 north") and (rt.globals().GPSX_CALLS or 0) >= 2,
+      "gpsx: calibrate %s, %s calls" % (acks(M).get(2), rt.globals().GPSX_CALLS))
+check(lt and lt.ok is True and true_pos(rt)[:3] == (10, 70, -30) and absof(st)[:3] == (10, 70, -30),
+      "gpsx push: %s thinks %s is %s" % (lt_text(lt), absof(st), true_pos(rt)))
 # without GPS a push is not noticed (shows the test world really pushes)
 rt, M, err = go({"x": 0, "y": 64, "z": -10}, extra="PUSH_AT = 3")
 check(true_pos(rt)[:3] == (1, 64, -10), "no gps push: at %s" % (true_pos(rt),))
