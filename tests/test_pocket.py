@@ -268,10 +268,31 @@ shots = {}
 env = pocket_env([["host", "click", "Connect to a WardenOS"], ["host", "shot", "servers"]])
 env.hosts["shot"] = lambda name: (shots.__setitem__(name, env.screen()), None)[1]
 start(env)
-check(conf_of(env).get("mode") == "server", "setup: connect choice not saved: %s" % conf_of(env))
+check(conf_of(env).get("mode") is None, "setup: connect must not be saved before pairing works: %s" % conf_of(env))
+
 check("Pick server" in shots.get("servers", ""), "setup: connect does not open the server list:\n" + shots.get("servers", ""))
 check(any(m["to"] == "all" and m["msg"].get("t") == "ping" for m in env.sent()), "setup: no discovery ping")
 violations(env, "setup connect")
+# no modem: explained, with a way out ("Use this pocket only")
+shots = {}
+env = Env(events=[["host", "click", "Connect to a WardenOS"], ["host", "shot", "nomodem"],
+                  ["host", "click", "Use this pocket only"], ["key", F12]], files=dict(POCKET_FS), modem=False)
+env.hosts["shot"] = lambda name: (shots.__setitem__(name, env.screen()), None)[1]
+start(env)
+check("No modem" in shots.get("nomodem", "") and "wireless" in shots.get("nomodem", ""), "no-modem screen:\n%s" % shots.get("nomodem"))
+check(conf_of(env).get("mode") == "local", "no modem: 'Use this pocket only' did not switch to local: %s" % conf_of(env))
+violations(env, "setup no modem")
+
+# modem but nobody answers: after a few seconds the hint about the computer's wireless modem appears
+shots = {}
+env = pocket_env([["host", "click", "Connect to a WardenOS"], ["host", "wait", 7]] + [["timer", i] for i in range(1, 15)] +
+                 [["host", "shot", "noanswer"]])
+env.rt.execute("CLK = 0 os.clock = function() return CLK end")      # a clock the test controls
+env.hosts["shot"] = lambda name: (shots.__setitem__(name, env.screen()), None)[1]
+env.hosts["wait"] = lambda s: (env.rt.execute("CLK = CLK + %d" % s), None)[1]
+start(env)
+check("No computer answered" in shots.get("noanswer", "") and "WIRELESS" in shots.get("noanswer", ""),
+      "no-answer hint missing:\n%s" % shots.get("noanswer"))
 print("first start: ok" if len(fail) == nfail else "first start: FAILED")
 nfail = len(fail)
 

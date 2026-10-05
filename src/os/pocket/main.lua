@@ -67,6 +67,7 @@ local running, exitAction = true, nil
 local serverSeen, notPaired = nil, false
 local servers = {}                              -- discovered WardenOS computers [id] = { label, user, seen }
 local serversBack = "setup"
+local searchStarted                             -- clock() when the server search began
 local devices = {}                              -- local mode: turtles heard directly [id] = status + seen
 local remote = {}                               -- connected mode: drone list from the server
 local sel, listScroll = nil, 0
@@ -149,6 +150,7 @@ local function go(s)
     if connected() then toServer({ t = "pocket_drones" }) else ping() end
   elseif s == "servers" then
     servers = {}
+    searchStarted = clock()
     ping()
   elseif s == "claude" then
     chatScroll = 0
@@ -357,9 +359,7 @@ local function drawSetup()
   put(2, 3, "Welcome!", T.accent)
   local y = para(4, "How should this pocket computer work?", T.text) + 1
   y = tile(y, { { "Connect to a WardenOS computer" }, { "(recommended)", T.good } }, function()
-    conf.mode = "server"
-    saveConf()
-    serversBack = "setup"
+    serversBack = "setup"                       -- the mode is saved once pairing works
     go("servers")
   end) + 1
   y = tile(y, { { "Run on this pocket only" }, { "standalone", T.dim } }, function()
@@ -444,8 +444,16 @@ end
 
 local function drawServers()
   header("Pick server", back(serversBack))
+  local function standalone()
+    conf.mode = "local"
+    saveConf()
+    go("home")
+    setNote("Running on this pocket only", T.good)
+  end
   if not rednet.isOpen() then
-    para(3, "No modem. Put a wireless or ender modem upgrade on this pocket computer.", T.bad)
+    local y = para(3, "No modem in this pocket.", T.bad) + 1
+    y = para(y, "To connect, craft the pocket with a wireless (or ender) modem: put it in a crafting grid together with the modem.", T.dim) + 1
+    buttons(y, { { "Use this pocket only", standalone, fg = T.bg, bg = T.accent } })
     footer()
     return
   end
@@ -454,8 +462,14 @@ local function drawServers()
   for _, s in pairs(servers) do list[#list + 1] = s end
   table.sort(list, function(a, b) return a.id < b.id end)
   if #list == 0 then
-    y = para(y, "Searching...", T.dim) + 1
-    para(y, "The computer must run WardenOS 1.3 or newer and be in modem range.", T.dim)
+    local waited = clock() - (searchStarted or clock())
+    if waited < 6 then
+      y = para(y, "Searching...", T.dim) + 1
+    else
+      y = para(y, "No computer answered.", T.warn) + 1
+      y = para(y, "The computer needs WardenOS 1.3+ and a WIRELESS or ender modem (wired is not enough), and must be in range.", T.dim) + 1
+      buttons(y, { { "Use this pocket only", standalone } })
+    end
   end
   for _, s in ipairs(list) do
     if y + 1 > H - 2 then break end
@@ -465,7 +479,7 @@ local function drawServers()
     zone(2, y, W - 2, 2, function() startPair(s.id, s.label) end)
     y = y + 3
   end
-  button(2, H - 1, "Refresh", function() servers = {} ping() end)
+  button(2, H - 1, "Refresh", function() servers = {} searchStarted = clock() ping() end)
   footer()
 end
 
