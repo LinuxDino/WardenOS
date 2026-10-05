@@ -130,8 +130,11 @@ return {
       zone(x, x + #label - 1, y, y, fn)
       return x + #label + 1
     end
+    local okA, artLib = pcall(dofile, "/os/lib/art.lua")
+    if not okA or type(artLib) ~= "table" or type(artLib.icon) ~= "function" then artLib = nil end
     local function icon(p, x, y)
       if x + 3 > W or y + 1 > H then return end
+      if p.art and artLib and artLib.icon(term.current(), p, x, y, T.panel) then return end
       if p.art then
         for i = 1, 2 do
           term.setCursorPos(x, y + i - 1)
@@ -243,7 +246,9 @@ return {
       end
       local sum = p.summary ~= "" and p.summary or p.description
       if status[p.id] == "update" and inst[p.id] then sum = ("update %s -> %s"):format(inst[p.id].version, p.version) end
-      put(tx, y + 1, sum:sub(1, math.max(0, x + w - tx - 1)), status[p.id] == "update" and T.warn or T.dim)
+      local room2 = math.max(0, x + w - tx - 1)
+      if #sum > room2 then sum = sum:sub(1, math.max(0, room2 - 2)):gsub("%s+$", "") .. ".." end
+      put(tx, y + 1, sum:sub(1, room2), status[p.id] == "update" and T.warn or T.dim)
       zone(x, (bx > tx + 3 and bx - 1) or (x + w - 1), y, y + 1, function() showDetail(p) end)
       zone(x, x + w - 1, y + 1, y + 1, function() showDetail(p) end)
     end

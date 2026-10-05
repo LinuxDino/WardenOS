@@ -80,7 +80,7 @@ class Env:
         for d in ("/os", "/os/apps", "/os/bin", "/os/lib"):
             FS[d] = True
         for f in ("os/lib/store.lua", "os/apps/store.lua", "os/bin/apt.lua", "os/config.lua", "os/lib/bigfont.lua",
-                  "os/apps/settings.lua", "os/kernel.lua"):
+                  "os/apps/settings.lua", "os/kernel.lua", "os/lib/art.lua"):
             FS["/" + f] = read("src/" + f)
         FS["/os/files.dat"] = 'return nil' if False else self.ser({"version": "1.6.1", "branch": "main", "files": OS_FILES})
         for k, v in (files or {}).items():
@@ -294,6 +294,13 @@ ok, r, m = e.lua(LIB + "return S.remove('demo', { purge = true })")
 check("/os/data/demo" not in e.M.FS, "purge: data kept")
 ok, r, m = e.lua(LIB + "return S.remove('demo')")
 check(r is False and "not installed" in m, "remove twice: %s" % m)
+# an OS update took over a path the package had: remove leaves the OS file alone
+e = Env(serve=DEMO_SERVE)
+e.lua(LIB + "S.catalog(true) S.install('demo')")
+e.M.FS["/os/files.dat"] = e.ser({"files": OS_FILES + ["/os/apps/demo.lua"]})
+e.M.FS["/os/apps/demo.lua"] = "-- now part of WardenOS"
+ok, r, m = e.lua(LIB + "return S.remove('demo')")
+check(r is True and e.M.FS["/os/apps/demo.lua"] == "-- now part of WardenOS", "remove deleted a file that is now an OS file")
 
 # upgrades + update (a file that the new version drops is deleted)
 e = Env()

@@ -73,7 +73,7 @@ return {
       art = { { " 42 ", "0000", "7777" }, { "+-x=", "3339", "8888" } },
       summary = "A touch calculator with brackets, powers and functions.",
       description = "A touch calculator with brackets, powers, sqrt, trig, logs, pi and the last answer. Type or tap; a history appears when the window is wide. Also the 'calculator' command.",
-      size = 8503,
+      size = 8535,
       files = {
         { from = "store/packages/calculator/calculator.lua", to = "/os/apps/calculator.lua" },
         { from = "store/packages/calculator/cmd.lua", to = "/os/bin/calculator.lua" },
@@ -97,7 +97,7 @@ return {
       art = { { "=== ", "7770", "4444" }, { "== /", "777f", "4444" } },
       summary = "Quick notes: many notes, the first line is the title.",
       description = "Quick notes: keep as many as you like, the first line is the title. A note list beside the editor when the window is wide, autosave, Ctrl+S / Ctrl+Q. Saved in /os/data/notes. Also the 'notes' command.",
-      size = 11082,
+      size = 11148,
       files = {
         { from = "store/packages/notes/notes.lua", to = "/os/apps/notes.lua" },
         { from = "store/packages/notes/cmd.lua", to = "/os/bin/notes.lua" },
@@ -109,7 +109,7 @@ return {
       art = { { " ~  ", "0e00", "e14b" }, { "   /", "000c", "5d9f" } },
       summary = "Pixel art with 16 colors, saved as .nfp images.",
       description = "Pixel art with 16 colors: pen, bucket fill and eraser. Pictures are saved as .nfp (the format of CraftOS paint and paintutils) in /os/data/paint, so other programs can load them.",
-      size = 8019,
+      size = 8037,
       files = {
         { from = "store/packages/paint/paint.lua", to = "/os/apps/paint.lua" },
       },

@@ -261,7 +261,7 @@ end
 
 -- every path that belongs to the OS: /os/files.dat (written by the installer), the manifest, core files
 local manifestCache
-local function osFiles()
+local function osFiles(offline)
   local set = {}
   for _, p in ipairs(CORE) do set[p] = true end
   local s = readFile("/os/files.dat")
@@ -269,7 +269,7 @@ local function osFiles()
   if type(d) == "table" and type(d.files) == "table" then
     for _, p in ipairs(d.files) do if type(p) == "string" then set[p] = true end end
   end
-  if manifestCache == nil then
+  if manifestCache == nil and not offline then
     manifestCache = false
     local body = fetch("manifest.lua")
     local fn = body and load(body, "=manifest", "t", {})
@@ -418,8 +418,9 @@ function M.remove(id, opts)
   local e = db[id]
   if not e then return finish(false, id .. " is not installed") end
   local apps = false
+  local protected = osFiles(true)                -- a later OS version may own one of these paths now
   for _, f in ipairs(e.files) do
-    if type(f) == "string" and validPath(f) and fs.exists(f) and not fs.isDir(f) then
+    if type(f) == "string" and validPath(f) and not protected[f] and fs.exists(f) and not fs.isDir(f) then
       fs.delete(f)
       if isApp(f) then apps = true end
     end

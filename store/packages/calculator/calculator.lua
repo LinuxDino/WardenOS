@@ -97,7 +97,7 @@ local function main()
   local T = (rawget(_G, "WardenOS") and WardenOS.theme) or {}
   local BG, PANEL, TEXT, DIM, ACC = T.bg or colors.black, T.panel or colors.gray, T.text or colors.white,
     T.dim or colors.lightGray, T.accent or colors.cyan
-  local input, result, ans, err, history = "", "", nil, nil, {}
+  local input, result, ans, err, history, last = "", "", nil, nil, {}, ""
   local zones = {}
   local KEYS = {
     { "C", "(", ")", "/", "<" },
@@ -124,7 +124,7 @@ local function main()
     if v then
       table.insert(history, 1, input .. " = " .. fmt(v))
       history[20] = nil
-      ans, result, err = v, fmt(v), nil
+      ans, result, err, last = v, fmt(v), nil, input
       input = ""
     else
       err = e
@@ -133,7 +133,7 @@ local function main()
 
   local function press(k)
     err = nil
-    if k == "C" then input, result = "", ""
+    if k == "C" then input, result, last = "", "", ""
     elseif k == "<" then input = input:sub(1, -2)
     elseif k == "=" then calc()
     elseif k == "sqrt" then input = input .. "sqrt("
@@ -151,7 +151,7 @@ local function main()
     local kw = W - sideW
     -- display
     for y = 1, 3 do put(1, y, string.rep(" ", kw), TEXT, PANEL) end
-    local shown = input ~= "" and input or (result ~= "" and "ans" or "0")
+    local shown = input ~= "" and input or (result ~= "" and last or "0")
     if #shown > kw - 2 then shown = ".." .. shown:sub(-(kw - 4)) end
     put(kw - #shown, 1, shown, DIM, PANEL)
     local big = err and ("error: " .. err) or (input ~= "" and "" or (result ~= "" and ("= " .. result) or ""))

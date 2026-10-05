@@ -122,7 +122,7 @@ local function main()
       local t, f, b = {}, {}, {}
       for x = 1, W do
         local c = get(x + ox, y - 1 + oy)
-        t[x], f[x], b[x] = c and " " or (((x + y) % 2 == 0) and "." or " "), "7", c and toHex(c) or "f"
+        t[x], f[x], b[x] = (not c and (x + ox) % 4 == 1 and (y + oy) % 2 == 0) and "." or " ", "7", c and toHex(c) or "f"
       end
       term.setCursorPos(1, y)
       term.blit(table.concat(t), table.concat(f), table.concat(b))

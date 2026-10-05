@@ -136,6 +136,7 @@ local function main()
       for i = 1, H - 2 do
         local n = notes[i]
         if not n then break end
+        if n.file == current then n.title = titleOf(lines[1]) end
         local on = i == sel
         local bg = on and (focus == "list" and ACC or PANEL) or BG
         local fg = on and (focus == "list" and BG or TEXT) or DIM
