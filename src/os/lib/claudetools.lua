@@ -18,7 +18,8 @@
 --   K.prune(cache)         drop entries whose task ended (cache = [id] = drone status with seen = os.clock())
 --   K.lines(cache)         { { id, action, phase, step, total, text = "#12 goto 10 64 5 - moving 5/20" }, ... }
 -- Map tools are only offered where the world map lives (/os/lib/map.lua: WardenOS computers, not pockets),
--- template tools where /os/lib/templates.lua is installed.
+-- template tools where /os/lib/templates.lua is installed, ME / RS storage tools (me_*) and their prompt part
+-- where an Advanced Peripherals ME or RS bridge is attached (/os/lib/me.lua).
 -- opts.api: the caller's /os/lib/claude.lua instance. Its json module must build the tools and read the
 -- replies (arrays, objects and json.null are told apart by identity, which differs between dofile() copies).
 local api, json
@@ -323,6 +324,166 @@ local function xyz(t)
   if x and y and z then return ("%d %d %d"):format(x, y, z) end
 end
 
+---------------------------------------------------------------- ME / RS storage tools (/os/lib/me.lua)
+-- Offered only when an Advanced Peripherals ME or RS bridge is attached when the kit is built (the tool list
+-- and the prompt stay stable for caching). meKit(list) appends the tools to list and returns
+-- { rules = prompt text, run = { [tool] = fn }, describe = { [tool] = fn } } or nil.
+local meLib
+local function getME()
+  if meLib == nil then
+    local ok, m = false, nil
+    if fs.exists("/os/lib/me.lua") then ok, m = pcall(dofile, "/os/lib/me.lua") end
+    meLib = ok and type(m) == "table" and m or false
+  end
+  return meLib or nil
+end
+
+local ME_RULES = [[
+ME/RS storage: a storage bridge is attached, so the player's items and autocrafting are in reach. When the player wants items: me_find first (stock, and whether craftable). If there are too few and the item is craftable, AUTOCRAFT it with me_craft (or me_ensure to top up) instead of crafting by hand or with drones, and tell the player what me_craft reports (running, or why not). Never say an item can't be made before me_find shows it isn't craftable. Hand items out with me_export.
+]]
+
+local function meKit(list)
+  local ME = getME()
+  if not ME then return nil end
+  local okf, found = pcall(ME.find)
+  if not okf or type(found) ~= "table" or #found == 0 then return nil end
+  local BR = { type = "string", description = "optional: bridge peripheral name (default: the first, AE before RS)" }
+  local tools = {
+    { name = "me_status",
+      description = "ME (Applied Energistics 2) / RS (Refined Storage) storage system through its bridge: connected, energy, storage use, item types, number of craftable items, crafting CPUs (busy, what they craft) and running crafting jobs.",
+      input_schema = obj({ bridge = BR }) },
+    { name = "me_find",
+      description = "Search the storage system for items by display name or id (fuzzy, e.g. 'iron ingot', 'oak planks', 'minecraft:torch'). Shows stock counts and whether each item can be AUTOCRAFTED (craftable items with 0 in stock are listed too). Use it first whenever the player asks for items or whether something can be made. query '*' lists the most stocked items; craftable_only = true only items with a crafting pattern.",
+      input_schema = obj({ query = { type = "string" }, limit = INT("optional, default 15, max 50"),
+                           craftable_only = { type = "boolean", description = "optional" }, bridge = BR }, { "query" }) },
+    { name = "me_craft", risky = true,
+      description = "AUTOCRAFT items with the storage system's patterns and crafting CPUs: the way to make items when there is an ME/RS system (don't craft by hand or with drones instead). Checks that the item is craftable and not already crafting, starts the job, then confirms it runs. Result status: done, crafting (job running), started (accepted but no job seen yet: ingredients probably missing), already_crafting, not_craftable (no pattern), no_cpu, missing (ingredients), failed.",
+      input_schema = obj({ item = { type = "string", description = "item id (best, from me_find) or display name" },
+                           count = INT("how many to craft (default 1)"),
+                           wait_seconds = INT("optional: seconds to watch for the job (0-30, default 4)"), bridge = BR },
+                         { "item" }) },
+    { name = "me_ensure", risky = true,
+      description = "Keep at least count of an item in the storage system: if the stock is lower, autocraft the difference (as me_craft); otherwise nothing happens.",
+      input_schema = obj({ item = { type = "string" }, count = INT("wanted stock"), bridge = BR }, { "item", "count" }) },
+    { name = "me_export", risky = true,
+      description = "Move items out of the storage system into an inventory next to the bridge (to = a direction: up, down, north, south, east, west) or a networked inventory (to = its peripheral name, e.g. minecraft:chest_3; see list_peripherals).",
+      input_schema = obj({ item = { type = "string" }, count = INT("how many (default 1)"),
+                           to = { type = "string", description = "direction or peripheral name" }, bridge = BR },
+                         { "item", "to" }) },
+  }
+  for _, t in ipairs(tools) do list[#list + 1] = t end
+
+  local function str(v) return v ~= nil and v ~= json.null and tostring(v) or "" end
+  local function num(v, d) v = (v ~= nil and v ~= json.null) and tonumber(v) or nil return v and math.floor(v) or d end
+  local function open(input) return ME.open(str(input.bridge) ~= "" and str(input.bridge) or nil) end
+  local function itemText(it)
+    return ("%s (%s) x%d%s"):format(it.display, it.name, it.count,
+      it.craftable == true and ", craftable" or (it.craftable == nil and ", craftable: unknown" or ""))
+  end
+
+  local run, desc = {}, {}
+  function run.me_status(input)
+    local b, err = open(input)
+    if not b then return err, true end
+    local s = b:status()
+    local names = {}
+    for _, x in ipairs(ME.find()) do names[#names + 1] = x.name .. " (" .. x.kind .. ")" end
+    local out = { ("Bridge %s (%s); bridges: %s"):format(s.name, s.kind == "me" and "Applied Energistics 2" or "Refined Storage",
+      table.concat(names, ", ")) }
+    if s.connected == false then out[#out + 1] = "NOT CONNECTED to a powered network" end
+    local e = s.energy
+    if e.stored or e.usage then
+      out[#out + 1] = ("Energy: %s / %s %s, using %s %s/t"):format(tostring(e.stored or "?"), tostring(e.max or "?"),
+        e.unit, tostring(e.usage or "?"), e.unit)
+    end
+    if s.storage.used or s.storage.total then
+      out[#out + 1] = ("Item storage: %s used of %s"):format(tostring(s.storage.used or "?"), tostring(s.storage.total or "?"))
+    end
+    out[#out + 1] = ("Items: %s types, %s in total; craftable items (patterns): %s"):format(tostring(s.types or "?"),
+      tostring(s.items or "?"), tostring(s.craftables or "?"))
+    if s.cpus then
+      local busy, lines = 0, {}
+      for _, c in ipairs(s.cpus) do
+        if c.busy then busy = busy + 1 end
+        lines[#lines + 1] = ("  %s: %s%s"):format(c.name, c.busy and "busy" or "free",
+          c.item and (" crafting " .. (c.amount and (c.amount .. " ") or "") .. c.item
+            .. (c.progress and c.total and (" (%s/%s)"):format(c.progress, c.total) or "")) or "")
+      end
+      out[#out + 1] = ("Crafting CPUs: %d, %d busy"):format(#s.cpus, busy)
+      for _, l in ipairs(lines) do out[#out + 1] = l end
+    end
+    if s.tasks and #s.tasks > 0 then
+      out[#out + 1] = "Crafting jobs:"
+      for _, t in ipairs(s.tasks) do
+        out[#out + 1] = ("  %s x%s%s"):format(tostring(t.item or "?"), tostring(t.amount or "?"),
+          t.progress and t.total and (" (%s/%s)"):format(t.progress, t.total) or "")
+      end
+    end
+    return table.concat(out, "\n")
+  end
+
+  function run.me_find(input)
+    local b, err = open(input)
+    if not b then return err, true end
+    local q = str(input.query)
+    local limit = math.max(1, math.min(50, num(input.limit, 15)))
+    local only = input.craftable_only == true
+    local hits
+    if q == "*" or q == "" then
+      local cat, cerr = b:catalog()
+      if not cat then return "can't read the storage system: " .. tostring(cerr), true end
+      table.sort(cat, function(x, y) if x.count ~= y.count then return x.count > y.count end return x.name < y.name end)
+      hits = {}
+      for i, it in ipairs(cat) do hits[i] = { item = it } end
+    else
+      hits, err = b:search(q, 500)
+      if not hits then return "can't read the storage system: " .. tostring(err), true end
+    end
+    local out, total = {}, 0
+    for _, h in ipairs(hits) do
+      if not only or h.item.craftable == true then
+        total = total + 1
+        if #out < limit then out[#out + 1] = itemText(h.item) end
+      end
+    end
+    if #out == 0 then
+      return ("Nothing matching %q is stored%s, and no pattern can craft it. Try another word or the item id."):format(q,
+        only and " or craftable" or "")
+    end
+    if total > #out then out[#out + 1] = ("(%d more: refine the query)"):format(total - #out) end
+    return table.concat(out, "\n")
+  end
+
+  local function craftText(r) return ("%s: %s"):format(tostring(r.status), tostring(r.message or "")), not r.ok end
+
+  function run.me_craft(input)
+    local b, err = open(input)
+    if not b then return err, true end
+    local wait = math.max(0, math.min(30, num(input.wait_seconds, 4)))
+    return craftText(b:craft(str(input.item), math.max(1, num(input.count, 1)), { wait = wait }))
+  end
+
+  function run.me_ensure(input)
+    local b, err = open(input)
+    if not b then return err, true end
+    return craftText(b:ensure(str(input.item), math.max(0, num(input.count, 0))))
+  end
+
+  function run.me_export(input)
+    local b, err = open(input)
+    if not b then return err, true end
+    local moved, why, it = b:export(str(input.item), math.max(1, num(input.count, 1)), str(input.to))
+    if not moved or moved == 0 then return "not exported: " .. tostring(why), true end
+    return ("exported %d %s (%s) to %s"):format(moved, it.display, it.name, str(input.to))
+  end
+
+  local function cnt(input) return str(input.count) ~= "" and str(input.count) or "1" end
+  function desc.me_craft(input) return ("autocraft %s x%s"):format(str(input.item), cnt(input)) end
+  function desc.me_ensure(input) return ("keep %s of %s in stock"):format(str(input.count), str(input.item)) end
+  function desc.me_export(input) return ("export %s x%s to %s"):format(str(input.item), cnt(input), str(input.to)) end
+  return { rules = ME_RULES, run = run, describe = desc }
+end
+
 ---------------------------------------------------------------- one tool kit
 function K.new(opts)
   opts = opts or {}
@@ -333,12 +494,13 @@ function K.new(opts)
   local withMap = getMap() ~= nil
   local withTemplates = getTemplates() ~= nil
   local list = toolList(withMap, withTemplates)
+  local meK = meKit(list)                         -- ME / RS storage tools when a bridge is attached
   local RISKY = {}
   for _, t in ipairs(list) do RISKY[t.name] = t.risky t.risky = nil end
   local kit = { TOOLS = json.array(list), RISKY = RISKY, RUN = {}, withMap = withMap }
   local RUN = kit.RUN
   local parts = { HEAD[where]:format(me, me), RULES, withTemplates and TEMPLATE_RULES or "", MOVE_RULES,
-                  withMap and MAP_RULES or NO_MAP_RULES, WORK_RULES, TAIL[where] }
+                  withMap and MAP_RULES or NO_MAP_RULES, WORK_RULES, meK and meK.rules or "", TAIL[where] }
   for i = #parts, 1, -1 do if parts[i] == "" then table.remove(parts, i) end end
   for i, p in ipairs(parts) do parts[i] = p:gsub("^%s+", ""):gsub("%s+$", "") end
   kit.system = table.concat(parts, "\n\n")
@@ -959,8 +1121,11 @@ function K.new(opts)
     return droneCall(id, "run", { name = tp.name:sub(1, 32), code = tp.code })
   end
 
+  if meK then for k, f in pairs(meK.run) do RUN[k] = f end end
+
   ------------------------------------------------ approval card text
   function kit.describe(name, input)
+    if meK and meK.describe[name] then return meK.describe[name](input) end
     if name == "run_lua" then return tostring(input.code) end
     if name == "write_file" then return ("%s (%d bytes)"):format(tostring(input.path), #tostring(input.content or "")) end
     if name == "call_peripheral" then return ("%s.%s(%s)"):format(tostring(input.name), tostring(input.method),

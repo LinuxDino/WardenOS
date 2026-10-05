@@ -16,6 +16,7 @@ return {
     "os/lib/login.lua",
     "os/lib/map.lua",
     "os/lib/market.lua",
+    "os/lib/me.lua",
     "os/lib/mineview.lua",
     "os/lib/pocketserver.lua",
     "os/lib/screen.lua",
