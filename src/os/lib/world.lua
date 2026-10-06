@@ -9,6 +9,9 @@
 --   W.gpsHosts     [id] = latest Warden GPS host announcement + seen (os.clock()); shared as WardenOS.gpsHosts
 --   W.gpsHost      the background Warden GPS host (/os/gps/core.lua) when /os/gps/host.cfg says mode = "desktop";
 --                  shared as WardenOS.gpsHost. It answers GPS pings while the desktop runs
+--   W.screenServer the Warden Screen server (/os/lib/screenserver.lua): answers the slim screen clients
+--                  (screen_who / screen_req); W.screens = its [id] = { page, w, h, seen } list, shared as
+--                  WardenOS.screens
 local PROTO = "wardenos"
 local FLUSH_EVERY = 5                           -- seconds between map writes
 local PUSH_EVERY = 10                           -- seconds between protect pushes to one drone
@@ -53,6 +56,20 @@ do
   if type(G) == "table" then G.gpsHosts = W.gpsHosts G.gpsHost = gpsHost end
 end
 W.gpsHost = gpsHost
+local screenServer                              -- Warden Screen server (optional, never breaks the world sync)
+do
+  local oks, SS = pcall(dofile, "/os/lib/screenserver.lua")
+  if oks and type(SS) == "table" and type(SS.new) == "function" then
+    local okn, srv = pcall(SS.new, { drones = W.drones, gpsHosts = W.gpsHosts, map = map, log = log })
+    if okn and type(srv) == "table" then
+      screenServer = srv
+      W.screens = srv.screens
+      local G = rawget(_G, "WardenOS")
+      if type(G) == "table" then G.screens = srv.screens end
+    end
+  end
+end
+W.screenServer = screenServer
 
 local seq = 3000000 + math.random(0, 99999) * 10   -- far from the Drones app, Claude and the pocket relay
 local lastPush = {}                             -- [drone id] = os.clock() of the last protect push
@@ -116,6 +133,7 @@ function W.event(ev)
     end
   end
   if gpsHost then pcall(gpsHost.event, ev) end
+  if screenServer then pcall(screenServer.event, ev) end
   if mineview then pcall(mineview.event, ev) end
   if os.clock() - lastFlush >= FLUSH_EVERY then flushMap() end
 end

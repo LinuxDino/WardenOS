@@ -6,11 +6,14 @@
 --   install <branch>   use another branch of the repository (works with "update" too)
 --   install update -y  update without asking (used by Settings > Update now)
 --   install gps        set this computer up as a Warden GPS host (also: G on the welcome screen)
---   install desktop    the WardenOS desktop setup, also on a computer that is a GPS host now
+--   install screen     set this computer up as a Warden Screen: one page of your main WardenOS computer, live on
+--                      a monitor (also: S on the welcome screen)
+--   install desktop    the WardenOS desktop setup, also on a computer that is a GPS host or screen now
 --
 -- On a turtle it installs the WardenOS drone agent instead (no erase, no desktop).
 -- On an Advanced Pocket Computer it installs WardenOS Pocket (no erase, no desktop).
--- On a standard (non-Advanced) computer it offers the Warden GPS host (no erase, no desktop).
+-- On a standard (non-Advanced) computer it offers the Warden GPS host (no erase, no desktop); `install screen`
+-- makes it a Warden Screen instead.
 
 local REPO, BRANCH = "LinuxDino/WardenOS", "main"
 local TOS_VERSION, STEPS = "1.0", 5
@@ -18,12 +21,13 @@ local ABORT = {}
 local erased = false
 
 local mode, branch, yes = "install", BRANCH, false
-local gpsArg, desktopArg = false, false
+local gpsArg, desktopArg, screenArg = false, false, false
 for _, a in ipairs({ ... }) do
   if a == "update" then mode = "update"
   elseif a == "-y" then yes = true
   elseif a == "gps" then gpsArg = true
   elseif a == "desktop" then desktopArg = true
+  elseif a == "screen" then screenArg = true
   elseif a ~= "" then branch = a end
 end
 local RAW = "https://raw.githubusercontent.com/" .. REPO .. "/" .. branch .. "/"
@@ -50,11 +54,27 @@ local function readGpsCfg()
 end
 local gpsCfg = readGpsCfg()
 local gpsDedicated = gpsCfg ~= nil and gpsCfg.mode ~= "desktop" and not fs.exists("/os/kernel.lua")
+-- Warden Screen: a dedicated screen stays one (re-running the installer updates it) unless "install desktop" / "gps"
+local SCREEN_CFG = "/os/screen/screen.cfg"
+local function readScreenCfg()
+  if not fs.exists(SCREEN_CFG) then return nil end
+  local f = fs.open(SCREEN_CFG, "r")
+  if not f then return nil end
+  local d = textutils.unserialize(f.readAll() or "")
+  f.close()
+  if type(d) == "table" and type(d.page) == "string" then return d end
+  return nil
+end
+local screenCfg = readScreenCfg()
+local screenDedicated = screenCfg ~= nil and not fs.exists("/os/kernel.lua")
+local screenOnly = not isTurtle and not isPocket
+  and (screenArg or (screenDedicated and not desktopArg and not gpsArg))
 -- pockets install even without colour/touch (the pocket UI also works with the keyboard)
-local gpsOnly = not isTurtle and not isPocket and (gpsArg or not isColour or (gpsDedicated and not desktopArg))
+local gpsOnly = not isTurtle and not isPocket and not screenOnly
+  and (gpsArg or not isColour or (gpsDedicated and not desktopArg))
 if gpsOnly and not isColour and desktopArg then
   printError("The WardenOS desktop needs an Advanced Computer (gold).")
-  print("This computer can be a Warden GPS host: run the installer without 'desktop'.")
+  print("This computer can be a Warden GPS host (run the installer without 'desktop') or a Warden Screen ('install screen').")
   return
 end
 
@@ -91,7 +111,7 @@ local function download()
   term.setCursorPos(1, 1)
   term.setTextColor(colors.cyan)
   print(isTurtle and "WardenOS drone installer" or (isPocket and "WardenOS Pocket installer"
-    or (gpsOnly and "Warden GPS installer" or "WardenOS installer")))
+    or (gpsOnly and "Warden GPS installer" or (screenOnly and "Warden Screen installer" or "WardenOS installer"))))
   term.setTextColor(colors.lightGray)
   print(REPO .. " @ " .. branch)
   print()
@@ -100,7 +120,7 @@ local function download()
   if not fn then error("broken manifest: " .. tostring(err), 0) end
   local ok, m = pcall(fn)
   local list = ok and type(m) == "table" and (isTurtle and m.drone or (isPocket and m.pocket
-    or (gpsOnly and m.gps or m.files)))
+    or (gpsOnly and m.gps or (screenOnly and m.screen or m.files))))
   if type(list) ~= "table" or #list == 0 then
     error("broken manifest", 0)
   end
@@ -178,7 +198,7 @@ if isTurtle then
       for _, p in ipairs({ "/os/users.dat", "/os/settings.lua", "/os/boot.cfg", "/os/files.dat" }) do
         if fs.exists(p) then fs.delete(p) end
       end
-      for _, d in ipairs({ "/os/apps", "/os/lib", "/os/pocket", "/os/bin", "/os/man", "/os/gps" }) do
+      for _, d in ipairs({ "/os/apps", "/os/lib", "/os/pocket", "/os/bin", "/os/man", "/os/gps", "/os/screen" }) do
         if fs.isDir(d) and #fs.list(d) == 0 then fs.delete(d) end
       end
     elseif fs.exists("/startup.lua") and not fs.exists("/os/drone/agent.lua") and not fs.exists("/startup.old.lua") then
@@ -236,7 +256,7 @@ if isPocket then
       for _, p in ipairs({ "/os/users.dat", "/os/settings.lua", "/os/boot.cfg", "/os/files.dat" }) do
         if fs.exists(p) then fs.delete(p) end
       end
-      for _, d in ipairs({ "/os/apps", "/os/lib", "/os/drone", "/os/bin", "/os/gps" }) do
+      for _, d in ipairs({ "/os/apps", "/os/lib", "/os/drone", "/os/bin", "/os/gps", "/os/screen" }) do
         if fs.isDir(d) and #fs.list(d) == 0 then fs.delete(d) end
       end
     elseif fs.exists("/startup.lua") and not fs.exists("/os/pocket/main.lua") and not fs.exists("/startup.old.lua") then
@@ -310,7 +330,7 @@ local function gpsInstall()
   say("A GPS host tells turtles, pockets and computers where they are. You need 4 or more hosts, not all in one flat plane.",
       colors.lightGray)
   if not isColour and not gpsArg then
-    say("(The WardenOS desktop needs an Advanced Computer; this computer can be a GPS host.)", colors.lightGray)
+    say("(The WardenOS desktop needs an Advanced Computer; this computer can be a GPS host. For a Warden Screen run: install screen)", colors.lightGray)
   end
   print()
 
@@ -417,7 +437,7 @@ local function gpsInstall()
       for _, p in ipairs({ "/os/users.dat", "/os/settings.lua", "/os/boot.cfg", "/os/files.dat" }) do
         if fs.exists(p) then fs.delete(p) end
       end
-      for _, d in ipairs({ "/os/apps", "/os/lib", "/os/drone", "/os/pocket", "/os/bin", "/os/man" }) do
+      for _, d in ipairs({ "/os/apps", "/os/lib", "/os/drone", "/os/pocket", "/os/bin", "/os/man", "/os/screen" }) do
         if fs.isDir(d) and #fs.list(d) == 0 then fs.delete(d) end
       end
     elseif fs.exists("/startup.lua") and not fs.exists("/os/gps/host.lua") and not fs.exists("/startup.old.lua") then
@@ -435,11 +455,202 @@ local function gpsInstall()
     end
   end
   if cfg.mode == "dedicated" and fs.exists("/os/gps/startup.lua") then fs.delete("/os/gps/startup.lua") end
+  if cfg.mode == "dedicated" and not hasDesktop and fs.isDir("/os/screen") then fs.delete("/os/screen") end  -- was a screen
   put(GPS_CFG, textutils.serialize({ x = cfg.x, y = cfg.y, z = cfg.z, mode = cfg.mode }))
   if not os.getComputerLabel() then os.setComputerLabel("gps-" .. os.getComputerID()) end
   say(("Warden GPS host %s at %d %d %d. Rebooting..."):format(OS_VERSION, cfg.x, cfg.y, cfg.z), colors.green)
   sleep(1)
   os.reboot()
+end
+
+---------------------------------------------------------------- Warden Screen (one page of the brain on a monitor)
+-- plain print/read, so it works on a standard computer too; also reached from the desktop welcome screen (S)
+local function screenInstall()
+  local hasDesktop = fs.exists("/os/kernel.lua")
+  local function say(s, c)
+    term.setTextColor(isColour and c or colors.white)
+    print(s)
+    term.setTextColor(colors.white)
+  end
+  local function ask(q)
+    term.setTextColor(colors.white)
+    write(q)
+    return read()
+  end
+  local function yesNo(q, default)
+    say(q .. (default and " (Y/n)" or " (y/n)"), colors.white)
+    while true do
+      local a = ask("> "):lower()
+      if a == "" and default ~= nil then return default end
+      if a == "y" or a == "yes" then return true end
+      if a == "n" or a == "no" then return false end
+    end
+  end
+  local function cancel()
+    say("Cancelled. Nothing was changed.", colors.lightGray)
+    error(ABORT, 0)
+  end
+  local core = assert(load(FILES["/os/screen/core.lua"], "=core.lua", "t", _G))()
+
+  term.setBackgroundColor(colors.black)
+  term.clear()
+  term.setCursorPos(1, 1)
+  say("Warden Screen setup", colors.cyan)
+  say("A Warden Screen shows ONE page of your main WardenOS computer (the brain) live on a monitor. No desktop, no login.",
+      colors.lightGray)
+  print()
+
+  local cfg
+  local old = screenCfg and core.read() or nil
+  if old and (yes or mode == "update") then
+    cfg = old
+  elseif old then
+    local pg = core.page(old.page)
+    say(("This computer is a Warden Screen: %s, brain %s."):format(pg and pg.name or old.page,
+        old.brain and ("#" .. old.brain) or "auto"), colors.yellow)
+    if yesNo("Keep these settings and update?", true) then cfg = old end
+  end
+
+  if not cfg then
+    cfg = { interval = 2, touch = true }
+    if hasDesktop then
+      say("WardenOS desktop is installed here.", colors.yellow)
+      say(" D  dedicated: remove the desktop (accounts, settings), run only the screen", colors.white)
+      say(" Q  cancel", colors.white)
+      while true do
+        local a = ask("D/Q> "):lower()
+        if a == "d" then break end
+        if a == "q" then cancel() end
+      end
+    end
+
+    -- 1. the page
+    say("Which page should it show? (Enter = 1)", colors.white)
+    for i, p in ipairs(core.PAGES) do say((" %d  %s - %s"):format(i, p.name, p.about), colors.lightGray) end
+    while true do
+      local a = ask(("Page (1-%d)> "):format(#core.PAGES))
+      if a:lower() == "q" then cancel() end
+      local n = a == "" and 1 or tonumber(a)
+      if n and core.PAGES[n] then cfg.page = core.PAGES[n].id break end
+      say("Type a number from the list (Q cancels).", colors.red)
+    end
+
+    -- 2. the monitor
+    local mons = core.monitors()
+    if #mons == 0 then
+      say("No monitor found: the page is shown on this computer's screen. Attach a monitor any time, the biggest one is used.",
+          colors.yellow)
+      cfg.monitor = nil
+    else
+      for i, m in ipairs(mons) do
+        say((" %d  %s  %dx%d%s"):format(i, m.name, m.w, m.h, m.colour and "" or " (black and white)"), colors.lightGray)
+      end
+      say(" 0  this computer's own screen", colors.lightGray)
+      say("Which monitor? (Enter = 1, the biggest)", colors.white)
+      while true do
+        local a = ask(("Monitor (0-%d)> "):format(#mons))
+        if a:lower() == "q" then cancel() end
+        local n = a == "" and 1 or tonumber(a)
+        if n == 0 then cfg.monitor = "term" break end
+        if n and mons[n] then cfg.monitor = mons[n].name break end
+        say("Type a number from the list (Q cancels).", colors.red)
+      end
+    end
+
+    -- 3. the brain
+    local nm = core.openModems()
+    local found = {}
+    if nm == 0 then
+      say("No modem found. Attach a wireless or ender modem (or a wired one on the brain's network); the screen waits for it.",
+          colors.red)
+    else
+      say("Looking for WardenOS computers...", colors.lightGray)
+      found = core.discover(2)
+    end
+    if #found > 0 then
+      for i, b in ipairs(found) do
+        say((" %d  #%d %s  v%s%s"):format(i, b.id, b.label or "", b.version,
+            b.drones and (", " .. b.drones .. " drones") or ""), colors.lightGray)
+      end
+      say("Which one is the brain? A number from the list or # and an ID like #5 (Enter = 1)", colors.white)
+      while true do
+        local a = ask(("Brain (1-%d)> "):format(#found))
+        if a:lower() == "q" then cancel() end
+        local id = tonumber((a:match("^%s*#%s*(%d+)%s*$")))
+        local n = a == "" and 1 or tonumber(a)
+        if id then cfg.brain = id break end
+        if n and found[n] then cfg.brain = found[n].id break end
+        say("A number from the list, or # and a computer ID like #5 (Q cancels).", colors.red)
+      end
+    else
+      if nm > 0 then
+        say("No WardenOS computer answered (it must run WardenOS " .. OS_VERSION .. "+, logged in, with a modem).",
+            colors.yellow)
+      end
+      say("Type the brain's computer ID (Enter = find it automatically)", colors.white)
+      while true do
+        local a = ask("Brain ID> ")
+        if a:lower() == "q" then cancel() end
+        if a == "" then cfg.brain = nil break end
+        local id = tonumber((a:gsub("#", "")))
+        if id and id >= 0 then cfg.brain = math.floor(id) break end
+        say("A computer ID is a number, like 5 (Q cancels).", colors.red)
+      end
+    end
+    print()
+    local pg = core.page(cfg.page)
+    say(("Warden Screen: %s on %s, brain %s."):format(pg.name,
+        cfg.monitor == "term" and "this computer" or (cfg.monitor or "the biggest monitor"),
+        cfg.brain and ("#" .. cfg.brain) or "auto"), colors.white)
+    if hasDesktop then
+      say("The WardenOS desktop, its accounts and settings are removed. Your own files stay.", colors.red)
+    end
+    if not yesNo("Install?", nil) then cancel() end
+  end
+
+  -- write
+  local mine = {}
+  for _, p in ipairs(MANIFEST.screen or {}) do mine["/" .. p] = true end
+  local function put(path, data)
+    local dir = fs.getDir(path)
+    if dir ~= "" then fs.makeDir(dir) end
+    local f = assert(fs.open(path, "w"))
+    f.write(data)
+    f.close()
+  end
+  if hasDesktop then
+    for _, p in ipairs(MANIFEST.files) do
+      local path = "/" .. p
+      if path ~= "/startup.lua" and not mine[path] and fs.exists(path) and not fs.isDir(path) then fs.delete(path) end
+    end
+    for _, p in ipairs({ "/os/users.dat", "/os/settings.lua", "/os/boot.cfg", "/os/files.dat" }) do
+      if fs.exists(p) then fs.delete(p) end
+    end
+    for _, d in ipairs({ "/os/apps", "/os/lib", "/os/drone", "/os/pocket", "/os/bin", "/os/man", "/os/gps" }) do
+      if fs.isDir(d) and #fs.list(d) == 0 then fs.delete(d) end
+    end
+  elseif fs.exists("/startup.lua") and not fs.exists("/os/screen/client.lua") and not fs.exists("/os/gps/host.lua")
+         and not fs.exists("/startup.old.lua") then
+    fs.copy("/startup.lua", "/startup.old.lua")
+  end
+  if gpsDedicated and fs.isDir("/os/gps") then fs.delete("/os/gps") end   -- was a dedicated GPS host
+  for path in pairs(mine) do
+    if FILES[path] then put(path == "/os/screen/startup.lua" and "/startup.lua" or path, FILES[path]) end
+  end
+  if fs.exists("/os/screen/startup.lua") then fs.delete("/os/screen/startup.lua") end
+  core.write(cfg, SCREEN_CFG)
+  if not os.getComputerLabel() then os.setComputerLabel("screen-" .. os.getComputerID()) end
+  say(("Warden Screen %s installed. Rebooting..."):format(OS_VERSION), colors.green)
+  sleep(1)
+  os.reboot()
+end
+
+if screenOnly then
+  local ok, err = pcall(screenInstall)
+  if not ok and err ~= ABORT then
+    if tostring(err):find("Terminated") then print("Cancelled.") else printError("Install failed: " .. tostring(err)) end
+  end
+  return
 end
 
 if gpsOnly then
@@ -603,13 +814,14 @@ local function welcome()
     y = say(y + 1, "WardenOS is already installed. Press U to update and keep your accounts.", colors.yellow, true)
   end
   local gy = y + (installed and 0 or 1)
-  if gy <= H - 1 then say(gy, "G: Warden GPS host", colors.lightGray, true) end
-  footer(installed and "ENTER clean U upd G GPS" or "ENTER begin G GPS Q quit")
+  if gy <= H - 1 then say(gy, "G GPS host, S Warden Screen", colors.lightGray, true) end
+  footer(installed and "ENTER new U upd G GPS S scr" or "ENTER begin G GPS S screen")
   while true do
     local _, k = os.pullEvent("key")
     if k == keys.enter then return "install" end
     if k == keys.u and installed then return "update" end
     if k == keys.g then return "gps" end
+    if k == keys.s then return "screen" end
     if k == keys.q then abort() end
   end
 end
@@ -932,7 +1144,7 @@ local function main()
   if mode == "update" then return update() end
   local choice = welcome()
   if choice == "update" then return update() end
-  if choice == "gps" then return "gps" end
+  if choice == "gps" or choice == "screen" then return choice end
   terms()
   local acct = account()
   local plan = diskStep()
@@ -946,6 +1158,13 @@ if ok and err == "gps" then                     -- G on the welcome screen: the 
   local okg, gerr = pcall(gpsInstall)
   if not okg and gerr ~= ABORT then
     if tostring(gerr):find("Terminated") then print("Cancelled.") else printError("Install failed: " .. tostring(gerr)) end
+  end
+  return
+end
+if ok and err == "screen" then                  -- S on the welcome screen: the plain-text Warden Screen setup
+  local oks, serr = pcall(screenInstall)
+  if not oks and serr ~= ABORT then
+    if tostring(serr):find("Terminated") then print("Cancelled.") else printError("Install failed: " .. tostring(serr)) end
   end
   return
 end

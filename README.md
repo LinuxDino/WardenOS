@@ -14,6 +14,8 @@ built for modded Minecraft worlds.
   fuel check before every trip, built-in tunnel / quarry / unload jobs, never digs chests or machines
 - **Warden GPS**: turn any computer into a GPS host from the installer; the **GPS** app checks your GPS setup,
   gives tips and locates more accurately than `gps locate`
+- **Warden Screen**: slim screen clients: an extra computer + monitor shows ONE page of your main WardenOS computer
+  live (drones, map, ME / RS storage, Claude's activity or GPS), no desktop or login; installed from the installer
 - **Peripheral Inspector**: browse every attached or networked peripheral from any mod and see its methods
 - **Map**: the world as your drones have seen it, zoom from 1 to 16 blocks per character, protected areas
 - **Dashboard**: live cards for energy, fluids, inventories, Create stress/speed, AE2 / Refined Storage (via Advanced
@@ -34,7 +36,7 @@ built for modded Minecraft worlds.
 ## Install
 
 Needs an **Advanced Computer** and the CC: Tweaked `http` API enabled (it is by default). A standard computer
-can be a Warden GPS host (see GPS below).
+can be a Warden GPS host (see GPS below) or a Warden Screen (see Warden Screen below).
 An Advanced Monitor is optional (at least 3x2 blocks recommended).
 
 From Pastebin ([pastebin.com/CeQfPV78](https://pastebin.com/CeQfPV78)), on a computer or a turtle:
@@ -129,6 +131,24 @@ The **GPS** app lists every host (Warden GPS and plain `gps host` ones), checks 
 not flat, spread out, high up) with a grade and tips, shows your drones' GPS state, and **Locate** finds this
 computer more accurately than `gps locate`: several pings over every host in range, outliers rejected, and a
 host with wrong coordinates is named. Programs can use the same: `dofile("/os/lib/gpsx.lua").locate()`.
+
+## Warden Screen (extra monitors)
+
+Your main WardenOS computer (the "brain": Claude, drones, map, ME) can feed extra computers + monitors that each
+show ONE page, live, full screen: **Drones** (every drone: task, progress, fuel, position, who started it, last
+result), **Map** (top-down around your drones), **Storage** (ME / RS: top items, energy, storage, crafting CPUs),
+**Claude** (what it is doing, recent tools, the drones it uses, API calls) or **GPS** (hosts + constellation grade).
+
+1. Put a computer (a standard one is enough; an Advanced Monitor gives colour) next to a monitor, with a wireless,
+   ender or wired modem that reaches the brain.
+2. Run `pastebin run CeQfPV78 screen` (or `install screen`); on an Advanced Computer you can also press **S** on the
+   welcome screen. Pick the page, the monitor (default: the biggest one) and the brain (default: the WardenOS
+   computer that answers, or type its ID).
+3. It starts on every boot, asks the brain every 2 seconds and picks a text size that fits the monitor. Touch the
+   monitor (or press Left / Right) to change the page. `install` or `install update` updates it and keeps the
+   settings (`/os/screen/screen.cfg`: page, monitor, brain, interval, map center / zoom).
+
+The brain answers while WardenOS runs on it (logged in). Screens only read data; they can't control anything.
 
 ## Update
 

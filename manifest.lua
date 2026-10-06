@@ -20,6 +20,7 @@ return {
     "os/lib/mineview.lua",
     "os/lib/pocketserver.lua",
     "os/lib/screen.lua",
+    "os/lib/screenserver.lua",
     "os/lib/settings.lua",
     "os/lib/sha256.lua",
     "os/lib/templates.lua",
@@ -46,6 +47,9 @@ return {
     "os/pocket/claudecore.lua",
     "os/pocket/main.lua",
     "os/pocket/startup.lua",
+    "os/screen/core.lua",
+    "os/screen/client.lua",
+    "os/screen/startup.lua",
     "os/apps/store.lua",
     "os/bin/apt.lua",
     "os/bin/asciiquarium.lua",
@@ -176,6 +180,13 @@ return {
     "os/gps/core.lua",
     "os/gps/host.lua",
     "os/gps/startup.lua",
+  },
+  -- what a Warden Screen gets (installer: "install screen" or S; os/screen/startup.lua becomes /startup.lua)
+  screen = {
+    "os/config.lua",
+    "os/screen/core.lua",
+    "os/screen/client.lua",
+    "os/screen/startup.lua",
   },
   -- what an Advanced Pocket Computer gets (os/pocket/startup.lua becomes /startup.lua)
   pocket = {

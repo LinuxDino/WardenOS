@@ -13,7 +13,8 @@
 -- Live activity, shared with the kernel's top bar and the apps (WardenOS.claude on a WardenOS computer, the
 -- global WardenClaude elsewhere, e.g. a pocket in local mode):
 --   { busy, status, drones = { [id] = { action = "goto 10 64 5", since = os.epoch("utc"), at = os.clock(),
---     task = true when the command started a task, pending = true until the drone answered } }, talks = {...} }
+--     task = true when the command started a task, pending = true until the drone answered } }, talks = {...},
+--     recent = { { text = tool name, at = os.clock() }, ... } (the last 8 tool calls, newest first) }
 --   K.activity()           that table (created when missing)
 --   K.prune(cache)         drop entries whose task ended (cache = [id] = drone status with seen = os.clock())
 --   K.lines(cache)         { { id, action, phase, step, total, text = "#12 goto 10 64 5 - moving 5/20" }, ... }
@@ -589,7 +590,15 @@ function K.new(opts)
   function kit.setBusy(busy, status)
     local A = K.activity()
     local now = os.clock()
-    A.talks[talk] = busy and { status = tostring(status or ""), at = now } or nil
+    local prev = A.talks[talk]
+    local st = tostring(status or "")
+    -- recent tool calls (newest first, shown by Warden Screens): every new "Running <tool>..." status
+    if busy and st:find("^Running ") and not (type(prev) == "table" and prev.status == st) then
+      if type(A.recent) ~= "table" then A.recent = {} end
+      table.insert(A.recent, 1, { text = (st:gsub("^Running ", ""):gsub("%.+$", "")), at = now })
+      while #A.recent > 8 do table.remove(A.recent) end
+    end
+    A.talks[talk] = busy and { status = st, at = now } or nil
     local any, latest, at = false, "", -1
     for k, t in pairs(A.talks) do
       if type(t) ~= "table" or now - (tonumber(t.at) or 0) > TALK_STALE then
