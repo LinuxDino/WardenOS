@@ -25,3 +25,4 @@ jobs:
       - run: python3 tests/test_me.py
       - run: python3 tests/test_gps.py
       - run: python3 tests/test_screen.py
+      - run: python3 tests/test_recovery.py

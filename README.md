@@ -30,7 +30,11 @@ built for modded Minecraft worlds.
 - **System Monitor**: overview plus debug pages: network traffic, all drones, Claude API calls, error log, disk
 - **Lua Console**, **Terminal** (full CraftOS shell, with `btop` and `neofetch`), **Files**, **Editor**
 - Dark and light theme, login with salted + hashed passwords
-- 2 second boot menu: WardenOS or plain CraftOS
+- 2 second boot menu: WardenOS, plain CraftOS or **Recovery**
+- **Recovery**: if WardenOS can't start, a clear error screen explains what went wrong and offers Restart, Repair
+  (downloads WardenOS again, keeps accounts and files), Safe mode (no monitor, no background services), Check files,
+  Reset display settings and the full error; a report is saved to `/os/crash.txt`. From CraftOS you can always
+  repair with `pastebin run CeQfPV78 update`
 - One-command install and in-place updates straight from this repository
 
 ## Install

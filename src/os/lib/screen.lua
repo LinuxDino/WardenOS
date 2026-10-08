@@ -23,6 +23,9 @@ function M.open(minW, minH, side)
 
   local W, H = tw, th
   local mwin
+  if mon and not pcall(function() mon.setTextScale(0.5) mon.getSize() end) then
+    mon = nil                                     -- not a working monitor (another mod, changed by an update)
+  end
   if mon then
     mon.setTextScale(0.5)
     local mw, mh = mon.getSize()

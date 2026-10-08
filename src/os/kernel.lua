@@ -11,6 +11,9 @@ end
 
 local settings = Settings.load()
 if not cfg.themes[settings.theme] then settings.theme = cfg.default end
+-- safe mode (Recovery > Safe mode): computer screen only, default look, no background services
+local SAFE = rawget(_G, "WARDEN_SAFE") == true
+if SAFE then settings.display, settings.theme = "computer", cfg.default end
 
 local T = {}                                   -- live theme, shared with apps
 rawset(_G, "WardenOS", { name = cfg.name, version = cfg.version, theme = T, repo = cfg.repo, branch = cfg.branch })
@@ -39,18 +42,25 @@ end
 local mon = monSide and peripheral.wrap(monSide)
 local mode = "computer"
 local W, H
+local monProblem                                -- a monitor that answers wrong (other mod, changed after an update)
 if mon then
   local mirror = settings.display == "mirror"
-  for _, s in ipairs({ settings.scale, 0.5 }) do   -- chosen scale, else the smallest one
-    mon.setTextScale(s)
-    local a, b = mon.getSize()
-    if mirror then a, b = math.min(a, tw), math.min(b, th) end
-    if a >= MINW and b >= MINH then
-      W, H, mode = a, b, mirror and "mirror" or "monitor"
-      break
+  local okm, e = pcall(function()
+    for _, s in ipairs({ settings.scale, 0.5 }) do   -- chosen scale, else the smallest one
+      mon.setTextScale(s)
+      local a, b = mon.getSize()
+      if mirror then a, b = math.min(a, tw), math.min(b, th) end
+      if a >= MINW and b >= MINH then
+        W, H, mode = a, b, mirror and "mirror" or "monitor"
+        break
+      end
     end
+    if mode == "computer" then mon.setTextScale(0.5) mon = nil end
+  end)
+  if not okm then
+    monProblem = ("monitor '%s' does not work (%s): using the computer screen"):format(tostring(monSide), tostring(e))
+    mon, mode = nil, "computer"
   end
-  if mode == "computer" then mon.setTextScale(0.5) mon = nil end
 end
 if not mon then monSide = nil W, H = tw, th end
 WardenOS.monitor, WardenOS.display = monSide, mode
@@ -164,7 +174,7 @@ end
 ---------------------------------------------------------------- world: drone status cache + world map (/os/lib/world.lua)
 -- loaded before the pocket server, which reads the shared status cache WardenOS.drones
 local world
-do
+if not SAFE then
   local ok, m = pcall(dofile, "/os/lib/world.lua")
   if ok and type(m) == "table" then world = m WardenOS.drones = m.drones end
 end
@@ -172,7 +182,7 @@ end
 ---------------------------------------------------------------- pocket server (WardenOS Pocket pairing + relay)
 -- a broken module must never break the desktop: every call is protected
 local psrv
-do
+if not SAFE then
   local ok, m = pcall(dofile, "/os/lib/pocketserver.lua")
   if ok and type(m) == "table" then psrv = m end
 end
@@ -808,7 +818,14 @@ end
 openModems()
 out.setBackgroundColor(colors.black)
 out.clear()
+-- the desktop started: the boot failure counter of /startup.lua goes back to 0
+pcall(function()
+  local f = fs.open("/os/boot.state", "w")
+  if f then f.write(textutils.serialize({ fails = 0, ok = os.epoch("utc") })) f.close() end
+end)
 user = doLogin()
+if SAFE then os.queueEvent("os_toast", "Safe mode: no monitor, no background services")
+elseif monProblem then os.queueEvent("os_toast", monProblem) end
 drawStatus()
 clockTimer = os.startTimer(1)
 local lastClock = clockStr()

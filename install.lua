@@ -1084,7 +1084,8 @@ end
 
 ---------------------------------------------------------------- update (keeps accounts, settings, user files)
 local function update()
-  if not fs.exists("/os/kernel.lua") then
+  -- Recovery > Repair also runs this when /os/kernel.lua itself is gone (accounts are still there)
+  if not fs.exists("/os/kernel.lua") and not fs.exists("/os/users.dat") then
     clr()
     local y = say(2, "WardenOS is not installed on this computer.", colors.red)
     say(y + 1, "Run the installer without 'update' for a clean install.", colors.lightGray)

@@ -29,6 +29,7 @@ end
 local entries = {
   { id = "wardenos", label = "WardenOS", hint = "desktop" },
   { id = "craftos", label = "CraftOS", hint = "shell" },
+  { id = "recovery", label = "Recovery", hint = "repair" },
 }
 local sel = 1
 for i, e in ipairs(entries) do if e.id == cfg.default then sel = i end end
@@ -143,6 +144,7 @@ local function draw()
 end
 
 local function saveDefault()
+  if entries[sel].id == "recovery" then return end   -- never start in Recovery by default
   cfg.default = entries[sel].id
   local fh = fs.open(CFG, "w")
   fh.write(textutils.serialize({ default = cfg.default, timeout = cfg.timeout }))
